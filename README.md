@@ -1,0 +1,87 @@
+# nars-rs
+
+Rust implementation of OpenNARS for Applications (ONA), aimed at real-time
+reasoning and embeddable agent systems.
+
+中文读者可从 [中文入门与实现指南](docs/PROJECT_GUIDE_ZH.md) 开始，内容涵盖
+OpenNARS/ONA 生态、Narsese、推理机制、系统架构、源码导览、运行方式与二次开发。
+
+The compatibility baseline is upstream ONA commit `dc4efd0a` from 2025-05-16.
+The original source snapshot is kept under `upstream/ona` so every ported rule
+and test can be checked against a fixed, auditable reference.
+
+## Current status
+
+The foundational truth-value, evidential-stamp, term encoding, Narsese parsing,
+variable system, bounded queues/tables, concept memory, atom/time indices,
+event/implication inference, and the complete 235-rule/22-reduction declarative
+NAL table are implemented. The integrated reasoner performs multi-cycle
+inference, learns temporal procedures from event streams, registers Agent
+operation callbacks, selects actions through recursive subgoals, and revises
+procedures with ONA-compatible negative anticipation when expected outcomes do
+not occur. Deterministic motor babbling, operation-event feedback, and closed
+loop policy learning are implemented for online Agent exploration. The
+continuous Cartpole control loop also runs at the upstream 10,001-step
+evaluation scale with positive and negative feedback. The 20,001-step Alien
+tracking environment exercises competing left/right/shoot operations and
+hit-driven learning. Pong and Pong2 run their upstream 10,001-step evaluations,
+including rally resets and the three-action left/right/stop variant. The
+runtime now supports configured motor-babbling arguments and passes concrete
+`({SELF} * argument)` products to callbacks. Bandrobot runs its 10,001-step
+numeric perception and four-action delivery loop. The Robot evaluation covers
+a 41x21 room map, eight headings, sector vision, collision-safe forward motion,
+dynamic food and reward feedback over 1,200 steps. The remaining control
+policies include a deterministic Testchamber harness covering six locations,
+three switches, two linked lights, a gated door, and multi-step autonomous
+goals. The runtime also provides raw UDP transport, a continuously cycling
+`UdpNar` service with clean thread shutdown, NUL-terminated Narsese datagram
+compatibility, and StatsD counter output. A usable interactive shell and
+`UDPNAR` command are included, with passive querying of eternal beliefs,
+temporal events, predictions, and implication tables. Advanced shell commands,
+along with deeper control/memory compatibility, are still being ported. Active
+questions now bind variables across learned subgoals into concrete operation
+arguments, while goal processing consumes the bounded 30-layer queue and
+decomposes sequence goals by their first unfulfilled component. Runtime Shell
+commands configure decision and anticipation thresholds, exploration,
+question priming, evidence stamps, numeric spaces, concept restrictions, and
+operation slots without restarting the process. Statistics, concepts, event
+queues, semantic/time indexes, and operation configuration are exposed as
+structured snapshots and through their corresponding Shell inspection commands.
+Stable real-time sensor and goal templates can be parsed once and submitted
+through `Reasoner::add_parsed_sentence`, avoiding text processing in the
+control-loop API while retaining normal input semantics.
+Safe fixed-capacity stack and explicitly chained hash-table equivalents cover
+the remaining upstream low-level allocation, collision and recycling tests
+without carrying C pointer-pool behavior into the public runtime.
+Procedural implication storage is partitioned by registered operation slot as
+in ONA, keeping table zero for temporal implications without an operation.
+Derived compound knowledge follows ONA's existing-concept filters, while
+continuous numeric properties are kept out of the temporal occurrence/mining
+path to bound irrelevant real-time correlations.
+Derived rule conclusions also pass ONA's structural validity filters before
+entering Memory, covering nested higher-order statements, variable occurrence,
+junction shape, set operations, and operation-bearing declarative conditions.
+Cycle-level higher-order special inference, per-cycle declarative implication
+application, negative-goal outcome suppression, relational-image question
+composition, and bounded operation-free goal-chain search are also implemented.
+Temporal variable introduction transfers learned procedures to unseen operation
+arguments, operation feedback runs through ONA-compatible nested cycles, and
+negative confirmations are applied immediately while their source spikes remain
+active. Same-property exemplar classification, revised-property relational
+closure, overlap-safe relational queries, and concrete-first variable-goal
+planning cover the remaining category, relational-network, and active-question
+behaviors. The executable upstream audit now matches all 138 annotated
+expectations across 57 `.nal` files. The evaluator uses the pinned upstream
+binary as the authoritative truth baseline because several example comments are
+stale; `map2.nal` is recorded as an upstream-equivalent fixed-capacity rejection.
+
+```bash
+cargo test --workspace
+cargo run -p nars-cli
+cargo run --release -p nars-core --example throughput -- 1000000 10000
+```
+
+See [UPSTREAM.md](UPSTREAM.md) for the compatibility contract and test policy.
+See [COMPATIBILITY.md](COMPATIBILITY.md) for the current upstream-test matrix.
+See [PERFORMANCE.md](PERFORMANCE.md) for the reproducible throughput and
+system-loop baselines.

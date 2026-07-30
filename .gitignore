@@ -1,0 +1,27 @@
+# Rust build output
+/target/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Editor and operating-system metadata
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Python caches and local test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Generated binaries contained beside the pinned upstream source snapshot
+/upstream/ona/NAR
+/upstream/ona/NAR.dSYM/

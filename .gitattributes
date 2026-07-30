@@ -1,0 +1,9 @@
+# Keep project-owned text files consistent across platforms.
+*.rs text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.sh text eol=lf
+
+# Preserve the pinned upstream snapshot byte-for-byte for compatibility audits.
+/upstream/ona/** -text
