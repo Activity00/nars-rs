@@ -1,0 +1,12 @@
+{
+  "id": "approval_denied",
+  "category": "regression",
+  "prompt": "Change src/lib.rs to print a banner.",
+  "setup": {"fixture": "rename_symbol"},
+  "limits": {"max_steps": 6, "max_model_calls": 4},
+  "expect": {
+    "approval_denied": true,
+    "files_unchanged": ["src/lib.rs"],
+    "run_status": "completed"
+  }
+}

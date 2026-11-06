@@ -1,0 +1,12 @@
+{
+  "id": "interrupted_run",
+  "category": "recovery",
+  "prompt": "Inspect the repository and summarize the crate layout.",
+  "setup": {"fixture": "multi_crate"},
+  "limits": {"max_steps": 12, "max_model_calls": 10},
+  "expect": {
+    "pause_after_step": 1,
+    "resume_completes": true,
+    "replay_hash_equal": true
+  }
+}

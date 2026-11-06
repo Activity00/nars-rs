@@ -25,3 +25,8 @@ htmlcov/
 # Generated binaries contained beside the pinned upstream source snapshot
 /upstream/ona/NAR
 /upstream/ona/NAR.dSYM/
+
+# nars-agent runtime state and web build output
+.nars-agent/
+web/node_modules/
+web/dist/

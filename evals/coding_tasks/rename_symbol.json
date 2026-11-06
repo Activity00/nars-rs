@@ -1,0 +1,13 @@
+{
+  "id": "rename_symbol",
+  "category": "coding_tasks",
+  "prompt": "Rename the function alpha to beta in src/lib.rs, then verify with cargo check.",
+  "setup": {"fixture": "rename_symbol"},
+  "limits": {"max_steps": 10, "max_model_calls": 8},
+  "expect": {
+    "final_answer_contains": ["beta"],
+    "files_modified": ["src/lib.rs"],
+    "tools_used": ["read_file", "apply_patch", "cargo_check"],
+    "approval_required": true
+  }
+}

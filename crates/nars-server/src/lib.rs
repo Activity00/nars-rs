@@ -1,0 +1,15 @@
+//! HTTP and Server-Sent Events API for nars-agent.
+//!
+//! The server owns durable sessions, starts runs, exposes run state, and
+//! streams the same append-only event log the runtime writes. The web UI is a
+//! pure consumer of that stream.
+
+pub mod auth;
+pub mod error;
+pub mod routes;
+pub mod sse;
+pub mod state;
+
+pub use error::ApiError;
+pub use routes::build_router;
+pub use state::{AppState, ServerConfig};

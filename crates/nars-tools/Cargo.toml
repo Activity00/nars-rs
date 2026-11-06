@@ -1,0 +1,23 @@
+[package]
+name = "nars-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Tool registry, broker, policy, sandbox, and built-in tools for nars-agent"
+
+[lints]
+workspace = true
+
+[dependencies]
+nars-agent-ir = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+walkdir = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

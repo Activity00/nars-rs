@@ -1,0 +1,27 @@
+[package]
+name = "nars-agent-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "NARS-driven session actor, planner, and event loop for nars-agent"
+
+[lints]
+workspace = true
+
+[dependencies]
+nars-core = { workspace = true }
+nars-agent-ir = { workspace = true }
+nars-model = { workspace = true }
+nars-tools = { workspace = true }
+nars-session = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

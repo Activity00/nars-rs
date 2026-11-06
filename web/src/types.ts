@@ -1,0 +1,207 @@
+export interface SessionMeta {
+  session_id: string;
+  workspace: string;
+  title: string;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface GoalSpec {
+  type: string;
+  target?: string;
+  description: string;
+}
+
+export interface TaskSpec {
+  goal: GoalSpec;
+  constraints: string[];
+  workspace: string;
+  user_message: string;
+  max_steps: number;
+}
+
+export interface NarsFact {
+  term: string;
+  truth: { frequency: number; confidence: number };
+  eternal: boolean;
+}
+
+export interface NarsGoal {
+  id: string;
+  description: string;
+  term: string;
+  priority: number;
+}
+
+export interface ToolManifest {
+  name: string;
+  description: string;
+  input_schema: unknown;
+  side_effect: string;
+  timeout_ms: number;
+  requires_approval: boolean;
+  version: string;
+  tags: string[];
+}
+
+export interface ToolCall {
+  id: string;
+  run_id: string;
+  tool: string;
+  arguments: Record<string, unknown>;
+  side_effect: string;
+  requires_approval: boolean;
+  created_at_ms: number;
+}
+
+export interface Diff {
+  path: string;
+  before_existed: boolean;
+  unified: string;
+  added: number;
+  removed: number;
+}
+
+export interface Artifact {
+  id: string;
+  kind: string;
+  location: string;
+  description: string;
+  bytes?: number;
+}
+
+export interface ToolResult {
+  call_id: string;
+  status: string;
+  exit_code?: number;
+  stdout: string;
+  stderr: string;
+  truncated: boolean;
+  duration_ms: number;
+  diff?: Diff;
+  artifacts: Artifact[];
+  error?: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface ScoredCandidate {
+  candidate_id: string;
+  tool: string;
+  score: number;
+  reason: string;
+}
+
+export interface SelectedAction {
+  candidate_id: string;
+  tool: string;
+  arguments: Record<string, unknown>;
+  score: number;
+}
+
+export interface NarsDecision {
+  step: number;
+  selected?: SelectedAction;
+  scored: ScoredCandidate[];
+  rationale: string;
+  goal_term: string;
+  source: string;
+}
+
+export interface Observation {
+  id: string;
+  run_id: string;
+  call_id: string;
+  tool: string;
+  summary: string;
+  outcome: string;
+  facts: NarsFact[];
+  artifacts: Artifact[];
+}
+
+export interface ToolPreview {
+  summary: string;
+  unified_diff?: string;
+  files: string[];
+}
+
+export interface PendingApproval {
+  call: ToolCall;
+  reason: string;
+  preview?: ToolPreview;
+}
+
+export interface TokenUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+export interface AgentEvent {
+  type: string;
+  [key: string]: any;
+}
+
+export interface WireEnvelope {
+  seq: number;
+  timestamp_ms: number;
+  event: AgentEvent;
+}
+
+export interface RunView {
+  id: string;
+  sessionId: string;
+  status: string;
+  step: number;
+  task?: TaskSpec;
+  goal?: NarsGoal;
+  facts: NarsFact[];
+  decisions: NarsDecision[];
+  observations: Observation[];
+  toolCalls: Record<string, ToolCallView>;
+  pendingApproval?: PendingApproval;
+  error?: { message: string };
+  usage: TokenUsage;
+  modelPurpose?: string;
+  createdAt: number;
+}
+
+export interface ToolCallView {
+  call: ToolCall;
+  result?: ToolResult;
+  observation?: Observation;
+}
+
+export type TimelineItem =
+  | { kind: "user"; id: string; text: string; ts: number }
+  | { kind: "assistant"; id: string; text: string; runId: string; ts: number }
+  | { kind: "decision"; id: string; runId: string; decision: NarsDecision; ts: number }
+  | { kind: "tool"; id: string; runId: string; callId: string; ts: number }
+  | { kind: "approval"; id: string; runId: string; callId: string; ts: number }
+  | {
+      kind: "status";
+      id: string;
+      runId?: string;
+      text: string;
+      tone: "info" | "success" | "error";
+      ts: number;
+    };
+
+export interface SelectedSessionState {
+  sessionId: string;
+  timeline: TimelineItem[];
+  runs: Record<string, RunView>;
+  runOrder: string[];
+  activeRunId?: string;
+  lastSeq: number;
+  connection: "connecting" | "live" | "error";
+}
+
+export interface AppState {
+  sessions: SessionMeta[];
+  selected?: SelectedSessionState;
+  tools: ToolManifest[];
+  provider?: string;
+  model?: string;
+  globalError?: string;
+  loadingSessions: boolean;
+}

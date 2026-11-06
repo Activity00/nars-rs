@@ -10,6 +10,52 @@ The compatibility baseline is upstream ONA commit `dc4efd0a` from 2025-05-16.
 The original source snapshot is kept under `upstream/ona` so every ported rule
 and test can be checked against a fixed, auditable reference.
 
+## nars-agent
+
+`nars-agent` is a development agent built on top of `nars-core`. NARS owns goals,
+facts, priorities, historical tool outcomes, and the next-action decision. A model
+only produces a validated **Agent IR** proposal; a policy-checked tool broker
+performs real work. The model can never call a tool directly.
+
+```text
+user message → model (Agent IR) → Rust validation → NARS goals/facts
+             → NARS decision → approval → tool broker → observation
+             → NARS facts → next step
+```
+
+- Architecture decisions:
+  [0001](docs/decisions/0001-agent-architecture.md),
+  [0002](docs/decisions/0002-agent-ir.md),
+  [0003](docs/decisions/0003-tool-protocol.md)
+- Architecture overview: [docs/architecture/overview.md](docs/architecture/overview.md)
+- Event protocol: [docs/protocol/events.md](docs/protocol/events.md)
+- 中文快速开始: [docs/agent/QUICKSTART_ZH.md](docs/agent/QUICKSTART_ZH.md)
+
+```bash
+# 1. Offline demo (no API key): demo provider, real read-only tool loop
+cargo run -p narsd -- --approval ask
+
+# 2. Real model (OpenAI-compatible endpoint)
+NARS_AGENT_PROVIDER=openai NARS_AGENT_API_KEY=sk-... NARS_AGENT_MODEL=gpt-4.1-mini \
+  cargo run -p narsd
+
+# 3. Ollama
+NARS_AGENT_PROVIDER=ollama NARS_AGENT_MODEL=qwen3 cargo run -p narsd
+
+# 4. Web UI in development (proxies /api to :8787)
+cd web && npm install && npm run dev     # http://localhost:5173
+
+# 5. Or build the UI once and let narsd serve it at :8787
+cd web && npm run build && cd .. && cargo run -p narsd
+```
+
+The focused test suite for the agent stack:
+
+```bash
+cargo test -p nars-agent-ir -p nars-model -p nars-tools \
+           -p nars-session -p nars-agent-runtime -p nars-server
+```
+
 ## Current status
 
 The foundational truth-value, evidential-stamp, term encoding, Narsese parsing,

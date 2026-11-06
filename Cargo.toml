@@ -1,5 +1,15 @@
 [workspace]
-members = ["crates/nars-core", "crates/nars-cli"]
+members = [
+    "crates/nars-core",
+    "crates/nars-cli",
+    "crates/nars-agent-ir",
+    "crates/nars-model",
+    "crates/nars-tools",
+    "crates/nars-agent-runtime",
+    "crates/nars-session",
+    "crates/nars-server",
+    "apps/narsd",
+]
 resolver = "2"
 
 [workspace.package]
@@ -9,10 +19,39 @@ license = "MIT"
 repository = "https://github.com/opennars/OpenNARS-for-Applications"
 rust-version = "1.85"
 
+[workspace.dependencies]
+nars-core = { path = "crates/nars-core" }
+nars-agent-ir = { path = "crates/nars-agent-ir" }
+nars-model = { path = "crates/nars-model" }
+nars-tools = { path = "crates/nars-tools" }
+nars-agent-runtime = { path = "crates/nars-agent-runtime" }
+nars-session = { path = "crates/nars-session" }
+nars-server = { path = "crates/nars-server" }
+
+async-trait = "0.1"
+axum = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+walkdir = "2"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
-

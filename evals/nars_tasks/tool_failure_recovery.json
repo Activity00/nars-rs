@@ -1,0 +1,12 @@
+{
+  "id": "tool_failure_recovery",
+  "category": "nars_tasks",
+  "prompt": "Read the target file. If the read fails, search for it instead and report the cause.",
+  "setup": {"fixture": "missing_then_present"},
+  "limits": {"max_steps": 10, "max_model_calls": 8},
+  "expect": {
+    "tools_used": ["read_file", "search"],
+    "min_nars_decisions": 2,
+    "fallback_allowed": true
+  }
+}

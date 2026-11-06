@@ -1,0 +1,21 @@
+[package]
+name = "nars-model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Model provider abstraction and OpenAI/Anthropic/Ollama adapters for nars-agent"
+
+[lints]
+workspace = true
+
+[dependencies]
+nars-agent-ir = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

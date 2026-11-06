@@ -1,0 +1,12 @@
+{
+  "id": "fix_compile_error",
+  "category": "coding_tasks",
+  "prompt": "The crate does not compile. Find the error, fix it, and run cargo test.",
+  "setup": {"fixture": "broken_crate"},
+  "limits": {"max_steps": 16, "max_model_calls": 12},
+  "expect": {
+    "final_answer_contains": ["test"],
+    "tools_used": ["cargo_check", "search", "apply_patch", "cargo_test"],
+    "approval_required": true
+  }
+}
