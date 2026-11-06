@@ -4,7 +4,7 @@
 //! the tool catalog, and a compact JSON state envelope. Workspace content is
 //! always quoted as data and marked untrusted.
 
-use nars_agent_ir::{RunState, ToolManifest};
+use nars_agent_ir::{RunState, TaskPlanView, ToolManifest};
 use nars_model::{ModelMessage, agent_ir_schema};
 use serde_json::json;
 
@@ -57,14 +57,24 @@ pub fn system_prompt(manifests: &[ToolManifest]) -> String {
 
 /// Builds the user message for a planning step.
 #[must_use]
-pub fn plan_message(state: &RunState) -> ModelMessage {
-    ModelMessage::user(render_state(state, "plan"))
+pub fn plan_message(state: &RunState, plan: Option<&TaskPlanView>) -> ModelMessage {
+    ModelMessage::user(render_state(state, "plan", plan))
 }
 
 /// Builds the user message for the final-answer step.
 #[must_use]
-pub fn finalize_message(state: &RunState) -> ModelMessage {
-    ModelMessage::user(render_state(state, "finalize"))
+pub fn finalize_message(state: &RunState, plan: Option<&TaskPlanView>) -> ModelMessage {
+    ModelMessage::user(render_state(state, "finalize", plan))
+}
+
+/// Builds a stage-specific guidance message when no admissible candidate exists.
+#[must_use]
+pub fn stage_message(
+    state: &RunState,
+    guidance: &str,
+    plan: Option<&TaskPlanView>,
+) -> ModelMessage {
+    ModelMessage::user(render_state(state, guidance, plan))
 }
 
 /// Builds a repair message after a validation rejection.
@@ -73,11 +83,11 @@ pub fn repair_message(state: &RunState, error: &str) -> ModelMessage {
     ModelMessage::user(format!(
         "{}\n\nYour previous response was rejected by the Rust validator:\n{error}\n\
          Return a corrected JSON object that satisfies the schema.",
-        render_state(state, "repair")
+        render_state(state, "repair", None)
     ))
 }
 
-fn render_state(state: &RunState, phase: &str) -> String {
+fn render_state(state: &RunState, phase: &str, plan: Option<&TaskPlanView>) -> String {
     let observations = state
         .observations
         .iter()
@@ -132,6 +142,7 @@ fn render_state(state: &RunState, phase: &str) -> String {
                        was verified, and anything the user must know. Do not propose new actions."
         }
         "repair" => "Return a corrected Agent IR object.",
+        other if !matches!(other, "plan" | "finalize") => other,
         _ => {
             "Decide what to do next. Return a task_proposal with candidate actions, a final_answer \
               if the task is already complete, or a clarification if blocked."
@@ -150,6 +161,7 @@ fn render_state(state: &RunState, phase: &str) -> String {
         "max_steps": state.task.max_steps,
         "status": state.status.label(),
         "pending_approval": pending,
+        "plan": plan,
         "observations": observations,
         "recent_decisions": decisions,
         "instruction": instruction
@@ -204,7 +216,7 @@ mod tests {
             task,
             0,
         );
-        let message = plan_message(&state);
+        let message = plan_message(&state, None);
         let value: serde_json::Value = serde_json::from_str(&message.content).unwrap();
         assert_eq!(value["phase"], "plan");
         assert_eq!(value["task"]["workspace"], "/tmp/ws");

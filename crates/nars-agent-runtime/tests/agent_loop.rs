@@ -49,6 +49,24 @@ fn proposal(tool: &str, arguments: serde_json::Value, confidence: f64) -> AgentI
     })
 }
 
+fn write_crate(dir: &TempDir) {
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("src/lib.rs"), "fn alpha() {}\n").unwrap();
+}
+
+fn task_other(dir: &TempDir) -> TaskSpec {
+    TaskSpec::new(
+        GoalSpec::new(GoalType::Other, "resume a checkpoint"),
+        dir.path().display().to_string(),
+        "resume a checkpoint",
+    )
+}
+
 fn final_answer() -> AgentIr {
     AgentIr::FinalAnswer(FinalAnswer {
         text: "Renamed `alpha` to `beta` in `src/lib.rs`.".to_owned(),
@@ -97,8 +115,7 @@ fn runtime(
 #[tokio::test(flavor = "multi_thread")]
 async fn runs_read_patch_final_end_to_end_and_replays() {
     let dir = TempDir::new().unwrap();
-    std::fs::create_dir_all(dir.path().join("src")).unwrap();
-    std::fs::write(dir.path().join("src/lib.rs"), "fn alpha() {}\n").unwrap();
+    write_crate(&dir);
     let (runtime, scripted, sink) = runtime(
         &dir,
         vec![
@@ -108,6 +125,7 @@ async fn runs_read_patch_final_end_to_end_and_replays() {
                 json!({"path": "src/lib.rs", "old_text": "alpha", "new_text": "beta"}),
                 0.95,
             ),
+            proposal("cargo_check", json!({}), 0.9),
             final_answer(),
         ],
         ApprovalMode::AutoApprove,
@@ -122,16 +140,28 @@ async fn runs_read_patch_final_end_to_end_and_replays() {
 
     let state = handle.state();
     assert_eq!(state.status, RunStatus::Completed, "{:?}", state.error);
-    assert_eq!(state.step, 2);
-    assert_eq!(state.decisions.len(), 2);
-    assert_eq!(state.observations.len(), 2);
-    assert_eq!(state.tool_calls.len(), 2);
+    assert_eq!(state.step, 3);
+    assert_eq!(state.decisions.len(), 3);
+    assert_eq!(state.observations.len(), 3);
+    assert_eq!(state.tool_calls.len(), 3);
     assert!(state.messages.last().unwrap().text.contains("Renamed"));
     assert_eq!(
         std::fs::read_to_string(dir.path().join("src/lib.rs")).unwrap(),
         "fn beta() {}\n"
     );
-    assert_eq!(scripted.requests().len(), 3);
+    assert_eq!(scripted.requests().len(), 4);
+    let final_plan = state
+        .decisions
+        .last()
+        .and_then(|decision| decision.plan.as_ref())
+        .expect("decision carries a plan view");
+    assert_eq!(final_plan.active.as_deref(), Some("verify"));
+    assert!(
+        final_plan
+            .stages
+            .iter()
+            .any(|stage| stage.id == "change" && stage.status == "satisfied")
+    );
     assert_eq!(handle.state().status, RunStatus::Completed);
 
     let events = sink.events.lock().unwrap().clone();
@@ -148,16 +178,17 @@ async fn runs_read_patch_final_end_to_end_and_replays() {
 #[tokio::test(flavor = "multi_thread")]
 async fn waits_for_patch_approval_then_completes() {
     let dir = TempDir::new().unwrap();
-    std::fs::create_dir_all(dir.path().join("src")).unwrap();
-    std::fs::write(dir.path().join("src/lib.rs"), "fn alpha() {}\n").unwrap();
+    write_crate(&dir);
     let (runtime, _scripted, sink) = runtime(
         &dir,
         vec![
+            proposal("read_file", json!({"path": "src/lib.rs"}), 0.9),
             proposal(
                 "apply_patch",
                 json!({"path": "src/lib.rs", "old_text": "alpha", "new_text": "beta"}),
                 0.95,
             ),
+            proposal("cargo_check", json!({}), 0.9),
             final_answer(),
         ],
         ApprovalMode::Ask,
@@ -198,20 +229,20 @@ async fn waits_for_patch_approval_then_completes() {
 #[tokio::test(flavor = "multi_thread")]
 async fn denied_patch_is_reported_and_the_run_continues() {
     let dir = TempDir::new().unwrap();
-    std::fs::create_dir_all(dir.path().join("src")).unwrap();
-    std::fs::write(dir.path().join("src/lib.rs"), "fn alpha() {}\n").unwrap();
+    write_crate(&dir);
     let (runtime, _scripted, sink) = runtime(
         &dir,
         vec![
+            proposal("read_file", json!({"path": "src/lib.rs"}), 0.9),
             proposal(
                 "apply_patch",
                 json!({"path": "src/lib.rs", "old_text": "alpha", "new_text": "beta"}),
                 0.95,
             ),
-            AgentIr::FinalAnswer(FinalAnswer {
-                text: "The patch was denied; the file is unchanged.".to_owned(),
-                success: false,
-                artifacts: Vec::new(),
+            AgentIr::Clarification(nars_agent_ir::Clarification {
+                question: "The patch was denied; the file is unchanged. How should I proceed?"
+                    .to_owned(),
+                options: vec!["stop".to_owned()],
             }),
         ],
         ApprovalMode::Ask,
@@ -271,10 +302,15 @@ impl ModelProvider for DelayedProvider {
 #[tokio::test(flavor = "multi_thread")]
 async fn pauses_and_resumes_between_steps() {
     let dir = TempDir::new().unwrap();
-    std::fs::create_dir_all(dir.path().join("src")).unwrap();
-    std::fs::write(dir.path().join("src/lib.rs"), "fn alpha() {}\n").unwrap();
+    write_crate(&dir);
     let scripted = Arc::new(ScriptedProvider::new(vec![
         proposal("read_file", json!({"path": "src/lib.rs"}), 0.9),
+        proposal(
+            "apply_patch",
+            json!({"path": "src/lib.rs", "old_text": "alpha", "new_text": "beta"}),
+            0.95,
+        ),
+        proposal("cargo_check", json!({}), 0.9),
         final_answer(),
     ]));
     let provider = Arc::new(DelayedProvider {
@@ -318,7 +354,7 @@ async fn pauses_and_resumes_between_steps() {
         .await
         .expect("run timed out after resume");
     assert_eq!(handle.state().status, RunStatus::Completed);
-    assert_eq!(scripted.requests().len(), 2);
+    assert_eq!(scripted.requests().len(), 4);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -329,7 +365,7 @@ async fn resumes_from_a_durable_checkpoint() {
     let (runtime, scripted, sink) = runtime(&dir, vec![final_answer()], ApprovalMode::AutoApprove);
 
     let run_id = RunId::new();
-    let mut state = RunState::new(run_id.clone(), SessionId::new(), task(&dir), 0);
+    let mut state = RunState::new(run_id.clone(), SessionId::new(), task_other(&dir), 0);
     state.status = RunStatus::Planning;
     let planner = PlannerSnapshot {
         version: 1,
@@ -349,5 +385,194 @@ async fn resumes_from_a_durable_checkpoint() {
         events
             .iter()
             .any(|envelope| matches!(envelope.event, AgentEvent::RunResumed { .. }))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn plan_overrides_model_order_and_premature_finish() {
+    let dir = TempDir::new().unwrap();
+    write_crate(&dir);
+    let (runtime, scripted, sink) = runtime(
+        &dir,
+        vec![
+            // The model wants to patch before investigating. The plan defers
+            // the patch and supplies safe read-only fallbacks.
+            proposal(
+                "apply_patch",
+                json!({"path": "src/lib.rs", "old_text": "alpha", "new_text": "beta"}),
+                0.99,
+            ),
+            // Still locked: listing alone does not satisfy investigation.
+            proposal(
+                "apply_patch",
+                json!({"path": "src/lib.rs", "old_text": "alpha", "new_text": "beta"}),
+                0.99,
+            ),
+            // After read_file, investigation is satisfied and the patch is admissible.
+            proposal(
+                "apply_patch",
+                json!({"path": "src/lib.rs", "old_text": "alpha", "new_text": "beta"}),
+                0.95,
+            ),
+            // Premature finish: the plan requires verification first.
+            final_answer(),
+            proposal("cargo_check", json!({}), 0.9),
+            final_answer(),
+        ],
+        ApprovalMode::AutoApprove,
+    );
+
+    let handle = runtime
+        .start(nars_agent_ir::SessionId::new(), task(&dir))
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(20), handle.wait())
+        .await
+        .expect("run timed out");
+
+    let state = handle.state();
+    assert_eq!(state.status, RunStatus::Completed, "{:?}", state.error);
+    let tools = state
+        .tool_calls
+        .iter()
+        .map(|call| call.tool.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tools,
+        ["list_files", "read_file", "apply_patch", "cargo_check"]
+    );
+    assert_eq!(scripted.requests().len(), 6);
+    assert!(
+        state.decisions[0]
+            .rationale
+            .contains("deferred 1 candidate(s) outside stage `investigate`"),
+        "{:?}",
+        state.decisions[0].rationale
+    );
+    let events = sink.events.lock().unwrap();
+    let plan = events
+        .iter()
+        .rev()
+        .find_map(|envelope| match &envelope.event {
+            AgentEvent::ObservationRecorded { plan, .. } => plan.clone(),
+            _ => None,
+        })
+        .expect("observation carries a plan view");
+    assert_eq!(plan.active.as_deref(), Some("answer"), "{plan:?}");
+    for stage in ["investigate", "change", "verify"] {
+        assert_eq!(
+            plan.stages
+                .iter()
+                .find(|candidate| candidate.id == stage)
+                .unwrap()
+                .status,
+            "satisfied",
+            "{stage}"
+        );
+    }
+}
+
+fn write_failing_crate(dir: &TempDir) {
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"failing_fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("src/lib.rs"),
+        "// fixture\n\
+         pub fn value() -> i32 { 1 }\n\
+         \n\
+         #[cfg(test)]\n\
+         mod tests {\n\
+             #[test]\n\
+             fn it_works() { assert_eq!(super::value(), 2); }\n\
+         }\n",
+    )
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn verification_failure_returns_to_change_and_switches_tool() {
+    let dir = TempDir::new().unwrap();
+    write_failing_crate(&dir);
+    let (runtime, _scripted, _sink) = runtime(
+        &dir,
+        vec![
+            proposal("read_file", json!({"path": "src/lib.rs"}), 0.9),
+            proposal(
+                "apply_patch",
+                json!({"path": "src/lib.rs", "old_text": "// fixture", "new_text": "// fixture updated"}),
+                0.9,
+            ),
+            proposal("cargo_test", json!({}), 0.9),
+            proposal(
+                "apply_patch",
+                json!({"path": "src/lib.rs", "old_text": "pub fn value() -> i32 { 1 }", "new_text": "pub fn value() -> i32 { 2 }"}),
+                0.95,
+            ),
+            proposal("cargo_test", json!({}), 0.9),
+            final_answer(),
+        ],
+        ApprovalMode::AutoApprove,
+    );
+
+    let handle = runtime
+        .start(nars_agent_ir::SessionId::new(), task(&dir))
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(30), handle.wait())
+        .await
+        .expect("run timed out");
+
+    let state = handle.state();
+    assert_eq!(state.status, RunStatus::Completed, "{:?}", state.error);
+    let tools = state
+        .tool_calls
+        .iter()
+        .map(|call| call.tool.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tools,
+        [
+            "read_file",
+            "apply_patch",
+            "cargo_test",
+            "apply_patch",
+            "cargo_check"
+        ]
+    );
+    assert_eq!(
+        state
+            .tool_results
+            .iter()
+            .map(|result| result.status)
+            .collect::<Vec<_>>(),
+        [
+            nars_agent_ir::ToolStatus::Succeeded,
+            nars_agent_ir::ToolStatus::Succeeded,
+            nars_agent_ir::ToolStatus::Failed,
+            nars_agent_ir::ToolStatus::Succeeded,
+            nars_agent_ir::ToolStatus::Succeeded,
+        ]
+    );
+    let repair_decision = &state.decisions[3];
+    assert_eq!(
+        repair_decision
+            .plan
+            .as_ref()
+            .and_then(|plan| plan.active.as_deref()),
+        Some("change"),
+        "verification failure should return to the change stage"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("src/lib.rs")).unwrap(),
+        "// fixture updated\n\
+         pub fn value() -> i32 { 2 }\n\
+         \n\
+         #[cfg(test)]\n\
+         mod tests {\n\
+             #[test]\n\
+             fn it_works() { assert_eq!(super::value(), 2); }\n\
+         }\n"
     );
 }

@@ -75,6 +75,21 @@ async fn request(
     (status, value)
 }
 
+fn tool_proposal(tool: &str, arguments: Value) -> AgentIr {
+    AgentIr::TaskProposal(TaskProposal {
+        goal: GoalSpec::new(GoalType::ModifyCode, "rename alpha"),
+        constraints: Vec::new(),
+        candidate_actions: vec![
+            CandidateAction::new(tool)
+                .with_arguments(arguments)
+                .with_confidence(0.95),
+        ],
+        confidence: 0.9,
+        notes: None,
+        summary: None,
+    })
+}
+
 fn final_answer(text: &str) -> AgentIr {
     AgentIr::FinalAnswer(FinalAnswer {
         text: text.to_owned(),
@@ -220,24 +235,21 @@ async fn optional_token_protects_api_routes() {
 async fn approval_route_executes_a_patch() {
     let workspace = TempDir::new().unwrap();
     std::fs::create_dir_all(workspace.path().join("src")).unwrap();
+    std::fs::write(
+        workspace.path().join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
     std::fs::write(workspace.path().join("src/lib.rs"), "fn alpha() {}\n").unwrap();
 
     let mut harness = harness(
         vec![
-            AgentIr::TaskProposal(TaskProposal {
-                goal: GoalSpec::new(GoalType::ModifyCode, "rename alpha"),
-                constraints: Vec::new(),
-                candidate_actions: vec![
-                    CandidateAction::new("apply_patch")
-                        .with_arguments(
-                            json!({"path": "src/lib.rs", "old_text": "alpha", "new_text": "beta"}),
-                        )
-                        .with_confidence(0.95),
-                ],
-                confidence: 0.9,
-                notes: None,
-                summary: None,
-            }),
+            tool_proposal("read_file", json!({"path": "src/lib.rs"})),
+            tool_proposal(
+                "apply_patch",
+                json!({"path": "src/lib.rs", "old_text": "alpha", "new_text": "beta"}),
+            ),
+            tool_proposal("cargo_check", json!({})),
             final_answer("Patched."),
         ],
         ApprovalMode::Ask,

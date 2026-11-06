@@ -98,6 +98,24 @@ export interface SelectedAction {
   score: number;
 }
 
+export interface PlanStageView {
+  id: string;
+  label: string;
+  status: string;
+  tools: string[];
+  overdue: boolean;
+  attempts: number;
+  failures: number;
+}
+
+export interface TaskPlanView {
+  active?: string;
+  stages: PlanStageView[];
+  notes: string[];
+  working_memory: string[];
+  can_finish: boolean;
+}
+
 export interface NarsDecision {
   step: number;
   selected?: SelectedAction;
@@ -105,6 +123,7 @@ export interface NarsDecision {
   rationale: string;
   goal_term: string;
   source: string;
+  plan?: TaskPlanView;
 }
 
 export interface Observation {
@@ -154,6 +173,7 @@ export interface RunView {
   step: number;
   task?: TaskSpec;
   goal?: NarsGoal;
+  plan?: TaskPlanView;
   facts: NarsFact[];
   decisions: NarsDecision[];
   observations: Observation[];

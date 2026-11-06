@@ -9,7 +9,7 @@ use std::sync::Arc;
 use nars_agent_runtime::ActorConfig;
 use nars_model::from_env;
 use nars_server::{AppState, ServerConfig, build_router};
-use nars_session::FileSessionStore;
+use nars_session::{FileExperienceStore, FileSessionStore};
 use nars_tools::policy::ApprovalMode;
 use tracing_subscriber::EnvFilter;
 
@@ -58,6 +58,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let store = Arc::new(FileSessionStore::new(&args.store)?);
+    let experience_root = args.store.parent().map_or_else(
+        || PathBuf::from(".nars-agent/experience"),
+        |parent| parent.join("experience"),
+    );
+    let experience = Arc::new(FileExperienceStore::new(experience_root)?);
     let mut config = ServerConfig {
         provider_name: provider_name.clone(),
         token: args.token,
@@ -68,6 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..ActorConfig::default()
         },
         workspace_root: args.workspace_root,
+        experience: Some(experience),
         ..ServerConfig::default()
     };
     if let Some(static_dir) = &args.static_dir

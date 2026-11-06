@@ -6,13 +6,14 @@ use std::sync::Arc;
 
 use nars_agent_ir::{
     AgentError, AgentEvent, AgentIr, CandidateAction, ChatMessage, ChatRole, Clarification,
-    FinalAnswer, ModelPurpose, Observation, ObservationId, Outcome, RequestId, RunId, RunState,
-    RunStatus, SessionId, TaskProposal, TaskSpec, TokenUsage, ToolCall, ToolCallId, ToolManifest,
-    ToolResult, TruthValue, ValidationContext, atomize, validate_ir,
+    FinalAnswer, GoalType, ModelPurpose, Observation, ObservationId, Outcome, RequestId, RunId,
+    RunState, RunStatus, SessionId, TaskProposal, TaskSpec, TokenUsage, ToolCall, ToolCallId,
+    ToolManifest, ToolResult, TruthValue, ValidationContext, atomize, validate_ir,
 };
 use nars_model::{ModelMessage, ModelRequest, agent_ir_schema};
 use nars_tools::{ToolBroker, build_call};
 
+use crate::plan::TaskPlan;
 use crate::planner::{NarsPlanner, PlannerSnapshot};
 use crate::prompt;
 
@@ -33,6 +34,8 @@ pub struct ActorConfig {
     pub repair_attempts: u32,
     /// Clock used for timestamps.
     pub clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+    /// Workspace experience used to seed tool priors.
+    pub experience: Option<nars_session::Experience>,
 }
 
 impl std::fmt::Debug for ActorConfig {
@@ -56,6 +59,7 @@ impl Default for ActorConfig {
             seed: 1,
             repair_attempts: 2,
             clock: Arc::new(system_now_ms),
+            experience: None,
         }
     }
 }
@@ -148,6 +152,9 @@ pub struct SessionActor {
     pending_tool: Option<PendingTool>,
     repair_attempts_left: u32,
     task_committed: bool,
+    plan: TaskPlan,
+    stage_guidance_left: u32,
+    finish_deferrals_left: u32,
 }
 
 impl SessionActor {
@@ -169,10 +176,16 @@ impl SessionActor {
             .iter()
             .map(|manifest| manifest.name.clone())
             .collect::<Vec<_>>();
-        let planner = NarsPlanner::new(run_key, tool_names, config.seed)?;
+        let planner = NarsPlanner::new_with_experience(
+            run_key,
+            tool_names,
+            config.seed,
+            config.experience.as_ref(),
+        )?;
         let now = (config.clock)();
         let mut state = RunState::new(run_id, session_id, task.clone(), now);
         state.status = RunStatus::Planning;
+        let plan = TaskPlan::for_task(&state.task, state.step);
         let system_prompt = prompt::system_prompt(&manifests);
         let repair_attempts = config.repair_attempts;
         let manifests = manifests
@@ -190,16 +203,20 @@ impl SessionActor {
             pending_tool: None,
             repair_attempts_left: repair_attempts,
             task_committed: false,
+            plan,
+            stage_guidance_left: 2,
+            finish_deferrals_left: 2,
         };
         let mut output = ActorOutput::default().with_event(AgentEvent::RunStarted {
             run_id: actor.state.run_id.clone(),
             session_id: actor.state.session_id.clone(),
             task,
         });
+        let plan_view = actor.plan.view(actor.state.step);
         let request = actor.begin_model_call(
             ModelPurpose::Plan,
             actor.state.step,
-            prompt::plan_message(&actor.state),
+            prompt::plan_message(&actor.state, Some(&plan_view)),
             &mut output,
         );
         output.commands.push(request);
@@ -236,6 +253,7 @@ impl SessionActor {
         let mut state = state;
         state.status = RunStatus::Planning;
         state.touch((config.clock)());
+        let plan = TaskPlan::recover(&state.task, &state.observations, state.step);
         let mut actor = Self {
             state,
             planner,
@@ -247,14 +265,18 @@ impl SessionActor {
             pending_tool: None,
             repair_attempts_left: repair_attempts,
             task_committed,
+            plan,
+            stage_guidance_left: 2,
+            finish_deferrals_left: 2,
         };
         let mut output = ActorOutput::default().with_event(AgentEvent::RunResumed {
             run_id: actor.state.run_id.clone(),
         });
+        let plan_view = actor.plan.view(actor.state.step);
         let command = actor.begin_model_call(
             ModelPurpose::Plan,
             actor.state.step,
-            prompt::plan_message(&actor.state),
+            prompt::plan_message(&actor.state, Some(&plan_view)),
             &mut output,
         );
         output.commands.push(command);
@@ -406,11 +428,35 @@ impl SessionActor {
         self.state.push_result(result.clone());
 
         let outcome = Outcome::from_status(result.status);
+        let path = result
+            .metadata
+            .get("path")
+            .and_then(serde_json::Value::as_str);
+        if pending.call.tool == "list_files" && result.is_success() {
+            let files = result
+                .stdout
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty() && !line.ends_with('/'))
+                .filter(|line| !line.starts_with('.'))
+                .filter(|line| !line.contains("node_modules"))
+                .take(8)
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            self.plan.note_files(files);
+        }
+        self.plan.record_observation(
+            &pending.call.tool,
+            result.is_success(),
+            path,
+            self.state.step,
+        );
         let outcome_facts =
             self.planner
                 .record_outcome(self.state.step, &pending.candidate, &result)?;
         let mut facts = outcome_facts;
         facts.extend(observation_facts(&pending.call, &result));
+        facts.extend(self.plan.facts());
         let observation = Observation {
             id: ObservationId::new(),
             run_id: self.state.run_id.clone(),
@@ -432,14 +478,16 @@ impl SessionActor {
             .with_event(AgentEvent::ObservationRecorded {
                 run_id: self.state.run_id.clone(),
                 observation,
+                plan: Some(self.plan.view(self.state.step)),
             })
             .with_command(Command::Checkpoint);
         self.state.status = RunStatus::Planning;
         self.state.touch((self.config.clock)());
+        let plan_view = self.plan.view(self.state.step);
         let command = self.begin_model_call(
             ModelPurpose::Plan,
             self.state.step,
-            prompt::plan_message(&self.state),
+            prompt::plan_message(&self.state, Some(&plan_view)),
             &mut output,
         );
         output.commands.push(command);
@@ -549,6 +597,15 @@ impl SessionActor {
                     committed.constraints.push(constraint.clone());
                 }
             }
+            // A generic user task can be refined into a concrete goal type by
+            // the model. Build the stage template from the refined goal, before
+            // marking the task committed so the plan is created exactly once.
+            if committed.goal.goal_type == GoalType::Other {
+                committed.goal.goal_type = proposal.goal.goal_type;
+            }
+            if !self.plan.is_active() && committed.goal.goal_type != GoalType::Other {
+                self.plan = TaskPlan::for_task(&committed, self.state.step);
+            }
             let (goal, facts) = self.planner.commit_task(&committed, proposal.confidence)?;
             self.task_committed = true;
             output.events.push(AgentEvent::NarsGoalCommitted {
@@ -559,17 +616,6 @@ impl SessionActor {
             });
         }
 
-        if proposal.candidate_actions.is_empty() {
-            let command = self.begin_model_call(
-                ModelPurpose::Finalize,
-                self.state.step,
-                prompt::finalize_message(&self.state),
-                &mut output,
-            );
-            output.commands.push(command);
-            return Ok(output);
-        }
-
         if self.state.step >= self.state.task.max_steps {
             return Ok(self.fail(
                 AgentError::StepLimit {
@@ -578,10 +624,58 @@ impl SessionActor {
                 output,
             ));
         }
+
+        let (mut candidates, deferred) = self.plan.filter(&proposal.candidate_actions);
+        candidates.extend(self.plan.fallback_candidates(&self.state.task));
+        dedupe_candidates(&mut candidates);
+
+        if candidates.is_empty() {
+            if self.plan.is_active() {
+                if self.stage_guidance_left > 0 {
+                    self.stage_guidance_left -= 1;
+                    let guidance = self.plan.stage_guidance(&self.state.task);
+                    let plan_view = self.plan.view(self.state.step);
+                    let command = self.begin_model_call(
+                        ModelPurpose::Plan,
+                        self.state.step,
+                        prompt::stage_message(&self.state, &guidance, Some(&plan_view)),
+                        &mut output,
+                    );
+                    output.commands.push(command);
+                    return Ok(output);
+                }
+                return Ok(self.fail(
+                    AgentError::internal("plan stage has no admissible action"),
+                    output,
+                ));
+            }
+            let plan_view = self.plan.view(self.state.step);
+            let command = self.begin_model_call(
+                ModelPurpose::Finalize,
+                self.state.step,
+                prompt::finalize_message(&self.state, Some(&plan_view)),
+                &mut output,
+            );
+            output.commands.push(command);
+            return Ok(output);
+        }
+        self.stage_guidance_left = 2;
+
         self.state.step += 1;
-        let decision = self
-            .planner
-            .decide(self.state.step, &proposal.candidate_actions)?;
+        self.plan.set_step(self.state.step);
+        let mut decision = self.planner.decide(self.state.step, &candidates)?;
+        decision.plan = Some(self.plan.view(self.state.step));
+        if !deferred.is_empty() {
+            let stage = self
+                .plan
+                .active_stage()
+                .map_or("none", |stage| stage.id.as_str());
+            decision.rationale = format!(
+                "deferred {} candidate(s) outside stage `{stage}`; {}",
+                deferred.len(),
+                decision.rationale
+            );
+        }
         self.state.decisions.push(decision.clone());
         output.events.push(AgentEvent::NarsDecisionMade {
             run_id: self.state.run_id.clone(),
@@ -600,11 +694,10 @@ impl SessionActor {
             .strip_prefix('a')
             .and_then(|index| index.parse::<usize>().ok())
             .and_then(|index| index.checked_sub(1))
-            .and_then(|index| proposal.candidate_actions.get(index))
+            .and_then(|index| candidates.get(index))
             .cloned()
             .or_else(|| {
-                proposal
-                    .candidate_actions
+                candidates
                     .iter()
                     .find(|candidate| candidate.tool == selected.tool)
                     .cloned()
@@ -669,6 +762,22 @@ impl SessionActor {
     }
 
     fn handle_final_answer(&mut self, answer: FinalAnswer, mut output: ActorOutput) -> ActorOutput {
+        if !self.plan.can_finish() && self.finish_deferrals_left > 0 {
+            self.finish_deferrals_left -= 1;
+            let guidance = self.plan.stage_guidance(&self.state.task);
+            let plan_view = self.plan.view(self.state.step);
+            let message = format!(
+                "A final_answer is premature because the task plan is not complete. {guidance}                  Continue with an admissible action, or return a clarification if you are blocked."
+            );
+            let command = self.begin_model_call(
+                ModelPurpose::Plan,
+                self.state.step,
+                prompt::stage_message(&self.state, &message, Some(&plan_view)),
+                &mut output,
+            );
+            output.commands.push(command);
+            return output;
+        }
         self.state.messages.push(ChatMessage {
             role: ChatRole::Assistant,
             text: answer.text.clone(),
@@ -747,10 +856,17 @@ impl SessionActor {
         });
         self.state.push_result(result.clone());
         let outcome = Outcome::from_status(result.status);
+        self.plan.record_observation(
+            &pending.call.tool,
+            result.is_success(),
+            None,
+            self.state.step,
+        );
         let mut facts =
             self.planner
                 .record_outcome(self.state.step, &pending.candidate, &result)?;
         facts.extend(observation_facts(&pending.call, &result));
+        facts.extend(self.plan.facts());
         let observation = Observation {
             id: ObservationId::new(),
             run_id: self.state.run_id.clone(),
@@ -771,13 +887,15 @@ impl SessionActor {
         output.events.push(AgentEvent::ObservationRecorded {
             run_id: self.state.run_id.clone(),
             observation,
+            plan: Some(self.plan.view(self.state.step)),
         });
         output.commands.push(Command::Checkpoint);
         self.state.status = RunStatus::Planning;
+        let plan_view = self.plan.view(self.state.step);
         let command = self.begin_model_call(
             ModelPurpose::Plan,
             self.state.step,
-            prompt::plan_message(&self.state),
+            prompt::plan_message(&self.state, Some(&plan_view)),
             &mut output,
         );
         output.commands.push(command);
@@ -843,6 +961,11 @@ impl SessionActor {
     fn validation_context(&self) -> ValidationContext {
         ValidationContext::new(self.manifests.keys().cloned())
     }
+}
+
+fn dedupe_candidates(candidates: &mut Vec<CandidateAction>) {
+    let mut seen = std::collections::BTreeSet::new();
+    candidates.retain(|candidate| seen.insert(candidate.signature()));
 }
 
 fn observation_facts(call: &ToolCall, result: &ToolResult) -> Vec<nars_agent_ir::NarsFact> {

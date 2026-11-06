@@ -38,12 +38,12 @@ data: {"seq":42,"timestamp_ms":...,"event":{...}}
 | `model_proposed` | ir, usage | 模型返回合法 IR |
 | `model_failed` | request_id, error | 模型失败/校验失败 |
 | `nars_goal_committed` | goal, facts | NARS 接受目标与事实 |
-| `nars_decision_made` | decision | NARS 完成一轮决策 |
+| `nars_decision_made` | decision, plan | NARS 完成一轮决策，附带任务计划视图 |
 | `approval_requested` | call, reason, preview | 需要用户审批 |
 | `approval_resolved` | call_id, approved | 审批结果 |
 | `tool_started` | call | 工具开始（含被拒绝的尝试） |
 | `tool_finished` | result | 工具结果 |
-| `observation_recorded` | observation | 语义观察与事实 |
+| `observation_recorded` | observation, plan | 语义观察、事实，以及应用后的任务计划 |
 | `assistant_message` | text | Agent 回复 |
 | `run_paused` | reason | 暂停 |
 | `run_resumed` | — | 恢复 |

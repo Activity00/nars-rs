@@ -162,6 +162,7 @@ mod tests {
                         rationale: "none".to_owned(),
                         goal_term: "goal".to_owned(),
                         source: nars_agent_ir::DecisionSource::None,
+                        plan: None,
                     },
                 },
             },

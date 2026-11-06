@@ -94,7 +94,7 @@ cargo run -p narsd     # narsd 自动服务 web/dist
 1. 在左侧输入项目绝对路径，点击 **New session**；
 2. 在输入框描述任务，例如“找到失败的测试并修复”；
 3. 模型提出候选动作；
-4. 右侧显示 NARS 评分与选择结果；
+4. 右侧显示任务计划（investigate → change → verify）、NARS 评分与选择结果；
 5. 只读工具自动执行；`apply_patch` 会暂停并展示 diff；
 6. 点击 **Approve & run** 或 **Deny**；
 7. 观察工具输出、NARS 事实、下一次决策；
@@ -168,6 +168,7 @@ curl -X POST http://127.0.0.1:8787/api/sessions/<session_id>/resume
 
 - `events.jsonl` 是事实来源；
 - `snapshot.json` 是 checkpoint，含 `state_hash`；
+- `../experience/<hash>.json` 保存同一 workspace 的工具成功率，供后续 Run 复用；
 - 服务重启后会话仍在；
 - 同一事件流重放得到相同 `state_hash`（集成测试覆盖）。
 
@@ -186,7 +187,7 @@ cd web && npm run build
 
 ## 10. 当前限制
 
-- NARS 决策内核已能用蕴含选择候选，但长期多步规划仍在增强（Phase 6）；
+- NARS 已具备线性阶段计划（investigate → change → verify）、阶段门控、失败回退和 workspace 经验复用；任意 DAG 与并行子任务待增强；
 - 持久化默认文件实现，SQLite 适配器预留；
 - 沙箱是路径级，不是容器级；不要在生产环境运行不可信任务；
 - MCP、浏览器、Git 提交尚未接入；

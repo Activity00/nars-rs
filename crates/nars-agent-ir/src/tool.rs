@@ -486,6 +486,43 @@ pub enum DecisionSource {
     None,
 }
 
+/// One stage of the runtime's task plan.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanStageView {
+    /// Stable stage identifier such as `investigate`.
+    pub id: String,
+    /// Human-readable label.
+    pub label: String,
+    /// `pending`, `active`, `satisfied`, or `blocked`.
+    pub status: String,
+    /// Tools that can satisfy this stage.
+    pub tools: Vec<String>,
+    /// Whether the stage exceeded its soft step budget.
+    pub overdue: bool,
+    /// Attempts recorded for this stage.
+    pub attempts: u32,
+    /// Failed attempts recorded for this stage.
+    pub failures: u32,
+}
+
+/// Serializable view of the task plan for events and the UI.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskPlanView {
+    /// Active stage identifier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<String>,
+    /// Ordered stages.
+    pub stages: Vec<PlanStageView>,
+    /// Recent plan notes.
+    #[serde(default)]
+    pub notes: Vec<String>,
+    /// Files discovered by read-only tools.
+    #[serde(default)]
+    pub working_memory: Vec<String>,
+    /// Whether the plan regards the task as ready to finalize.
+    pub can_finish: bool,
+}
+
 /// The auditable result of one NARS decision round.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NarsDecision {
@@ -501,6 +538,9 @@ pub struct NarsDecision {
     pub goal_term: String,
     /// Which mechanism produced the selection.
     pub source: DecisionSource,
+    /// Task plan state at decision time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<TaskPlanView>,
 }
 
 #[cfg(test)]

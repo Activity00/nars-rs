@@ -5,9 +5,11 @@
 //! state digest.
 
 pub mod event_log;
+pub mod experience;
 pub mod snapshot;
 pub mod store;
 
 pub use event_log::{EventEnvelope, EventLog, LogError};
+pub use experience::{Experience, ExperienceStat, ExperienceStore, FileExperienceStore};
 pub use snapshot::{RunSummary, SessionMeta, SessionSnapshot};
 pub use store::{FileSessionStore, SessionStore, StoreError};

@@ -65,7 +65,10 @@ export function Timeline({ timeline, runs, busyCallId, onDecision }: Props) {
             return (
               <div className="event decision" key={item.id}>
                 <div className="decision-head">
-                  <span className="eyebrow">NARS decision · step {decision.step}</span>
+                  <span className="eyebrow">
+                    NARS decision · step {decision.step}
+                    {decision.plan?.active ? ` · ${decision.plan.active}` : ""}
+                  </span>
                   <span className={`pill pill-${decision.source === "nars" ? "ok" : "warn"}`}>
                     {decision.source}
                   </span>

@@ -6,14 +6,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use nars_agent_ir::{
-    AgentEvent, GoalSpec, GoalType, RunId, RunState, SessionId, TaskSpec, ToolCallId,
+    AgentEvent, GoalSpec, GoalType, RunId, RunState, RunStatus, SessionId, TaskSpec, ToolCallId,
 };
 use nars_agent_runtime::{
     ActorConfig, AgentRuntime, PlannerSnapshot, RunHandle, RuntimeConfig, RuntimeSink,
 };
 use nars_model::ModelProvider;
 use nars_session::{
-    EventEnvelope, RunSummary, SessionMeta, SessionSnapshot, SessionStore, StoreError,
+    EventEnvelope, Experience, ExperienceStore, RunSummary, SessionMeta, SessionSnapshot,
+    SessionStore, StoreError,
 };
 use nars_tools::ToolBroker;
 use nars_tools::policy::{ApprovalMode, Policy, PolicyConfig};
@@ -40,6 +41,8 @@ pub struct ServerConfig {
     pub static_dir: Option<PathBuf>,
     /// Optional restriction on session workspaces.
     pub workspace_root: Option<PathBuf>,
+    /// Optional cross-run experience store.
+    pub experience: Option<Arc<dyn ExperienceStore>>,
 }
 
 impl std::fmt::Debug for ServerConfig {
@@ -65,6 +68,7 @@ impl Default for ServerConfig {
             retry: nars_model::RetryConfig::default(),
             static_dir: None,
             workspace_root: None,
+            experience: None,
         }
     }
 }
@@ -146,10 +150,20 @@ impl AppState {
                 .map_err(|error| ApiError::Internal(error.to_string()))?,
         );
         let sender = self.session_sender(session_id);
+        let workspace_text = workspace.display().to_string();
+        let experience = self
+            .config
+            .experience
+            .as_ref()
+            .and_then(|store| store.load(&workspace_text).ok());
+        let mut actor_config = self.config.actor.clone();
+        actor_config.experience = experience;
         let sink = Arc::new(StoreSink::new(
             session_id.clone(),
             Arc::clone(&self.store),
             sender.clone(),
+            self.config.experience.clone(),
+            workspace_text,
         ));
 
         let user_event = self.store.append(
@@ -178,7 +192,7 @@ impl AppState {
             broker,
             sink as Arc<dyn RuntimeSink>,
             RuntimeConfig {
-                actor: self.config.actor.clone(),
+                actor: actor_config,
                 retry: self.config.retry,
             },
         );
@@ -226,17 +240,27 @@ impl AppState {
                 .map_err(|error| ApiError::Internal(error.to_string()))?,
         );
         let sender = self.session_sender(session_id);
+        let workspace_text = workspace.display().to_string();
+        let experience = self
+            .config
+            .experience
+            .as_ref()
+            .and_then(|store| store.load(&workspace_text).ok());
+        let mut actor_config = self.config.actor.clone();
+        actor_config.experience = experience;
         let sink = Arc::new(StoreSink::new(
             session_id.clone(),
             Arc::clone(&self.store),
             sender,
+            self.config.experience.clone(),
+            workspace_text,
         ));
         let runtime = AgentRuntime::new(
             Arc::clone(&self.provider),
             broker,
             sink as Arc<dyn RuntimeSink>,
             RuntimeConfig {
-                actor: self.config.actor.clone(),
+                actor: actor_config,
                 retry: self.config.retry,
             },
         );
@@ -324,6 +348,9 @@ pub struct StoreSink {
     store: Arc<dyn SessionStore>,
     sender: broadcast::Sender<EventEnvelope>,
     last_seq: AtomicU64,
+    experience: Option<Arc<dyn ExperienceStore>>,
+    workspace: String,
+    task_counted: std::sync::atomic::AtomicBool,
 }
 
 impl StoreSink {
@@ -333,12 +360,56 @@ impl StoreSink {
         session_id: SessionId,
         store: Arc<dyn SessionStore>,
         sender: broadcast::Sender<EventEnvelope>,
+        experience: Option<Arc<dyn ExperienceStore>>,
+        workspace: String,
     ) -> Self {
         Self {
             session_id,
             store,
             sender,
             last_seq: AtomicU64::new(0),
+            experience,
+            workspace,
+            task_counted: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn persist_experience(&self, state: &RunState, planner: &PlannerSnapshot) {
+        let Some(store) = &self.experience else {
+            return;
+        };
+        let mut experience = store
+            .load(&self.workspace)
+            .unwrap_or_else(|_| Experience::new(&self.workspace));
+        experience.workspace = self.workspace.clone();
+        for (tool, stat) in &planner.tool_stats {
+            let entry = experience.tools.entry(tool.clone()).or_default();
+            if stat.attempts >= entry.attempts {
+                entry.attempts = stat.attempts;
+                entry.successes = stat.successes;
+                entry.failures = stat.failures;
+            }
+        }
+        for (signature, stat) in &planner.signature_stats {
+            let entry = experience.signatures.entry(signature.clone()).or_default();
+            if stat.attempts >= entry.attempts {
+                entry.attempts = stat.attempts;
+                entry.successes = stat.successes;
+                entry.failures = stat.failures;
+            }
+        }
+        if state.status.is_terminal()
+            && !self
+                .task_counted
+                .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            let success = state.status == RunStatus::Completed && state.error.is_none();
+            let goal_type = planner.task_goal_type.unwrap_or(state.task.goal.goal_type);
+            experience.record_task(goal_type.atom_suffix(), success);
+        }
+        experience.updated_at_ms = now_ms();
+        if let Err(error) = store.save(&experience) {
+            tracing::warn!(%error, "failed to persist workspace experience");
         }
     }
 }
@@ -370,6 +441,7 @@ impl RuntimeSink for StoreSink {
         if let Err(error) = self.store.save_snapshot(&snapshot) {
             tracing::error!(%error, "failed to save session snapshot");
         }
+        self.persist_experience(state, planner);
     }
 }
 

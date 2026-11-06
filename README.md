@@ -26,7 +26,8 @@ user message → model (Agent IR) → Rust validation → NARS goals/facts
 - Architecture decisions:
   [0001](docs/decisions/0001-agent-architecture.md),
   [0002](docs/decisions/0002-agent-ir.md),
-  [0003](docs/decisions/0003-tool-protocol.md)
+  [0003](docs/decisions/0003-tool-protocol.md),
+  [0004](docs/decisions/0004-task-plan.md)
 - Architecture overview: [docs/architecture/overview.md](docs/architecture/overview.md)
 - Event protocol: [docs/protocol/events.md](docs/protocol/events.md)
 - 中文快速开始: [docs/agent/QUICKSTART_ZH.md](docs/agent/QUICKSTART_ZH.md)

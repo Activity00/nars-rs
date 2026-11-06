@@ -12,7 +12,7 @@ use crate::ids::{RequestId, RunId, SessionId, ToolCallId};
 use crate::ir::AgentIr;
 use crate::state::TaskSpec;
 use crate::tool::{
-    NarsDecision, NarsFact, NarsGoal, Observation, ToolCall, ToolPreview, ToolResult,
+    NarsDecision, NarsFact, NarsGoal, Observation, TaskPlanView, ToolCall, ToolPreview, ToolResult,
 };
 
 /// Why the runtime called the model.
@@ -187,6 +187,9 @@ pub enum AgentEvent {
         run_id: RunId,
         /// Observation.
         observation: Observation,
+        /// Task plan state after the observation was applied.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plan: Option<TaskPlanView>,
     },
     /// The agent sent a message to the user.
     AssistantMessage {

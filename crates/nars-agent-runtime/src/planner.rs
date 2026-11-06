@@ -27,6 +27,7 @@ use nars_agent_ir::{
     keyed_atom, short_hash,
 };
 use nars_core::{OperationFeedback, Reasoner, Term, Truth};
+use nars_session::Experience;
 use serde::{Deserialize, Serialize};
 
 /// Statistics retained for one tool or action signature.
@@ -78,6 +79,9 @@ pub struct PlannerSnapshot {
     pub signature_stats: BTreeMap<String, ToolStat>,
     /// The task's symbolic goal.
     pub task_goal: Option<NarsGoal>,
+    /// Goal type committed by the model proposal, if any.
+    #[serde(default)]
+    pub task_goal_type: Option<nars_agent_ir::GoalType>,
     /// Number of decisions taken.
     pub decision_count: u32,
 }
@@ -114,6 +118,7 @@ pub struct NarsPlanner {
     tool_stats: BTreeMap<String, ToolStat>,
     signature_stats: BTreeMap<String, ToolStat>,
     task_goal: Option<NarsGoal>,
+    task_goal_type: Option<nars_agent_ir::GoalType>,
     run_key: String,
     seed: u64,
     decision_count: u32,
@@ -204,10 +209,50 @@ impl NarsPlanner {
             tool_stats: BTreeMap::new(),
             signature_stats: BTreeMap::new(),
             task_goal: None,
+            task_goal_type: None,
             run_key: run_key.into(),
             seed,
             decision_count: 0,
         })
+    }
+
+    /// Creates a planner seeded with workspace experience.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the NARS runtime cannot be initialized.
+    pub fn new_with_experience(
+        run_key: impl Into<String>,
+        tool_names: impl IntoIterator<Item = String>,
+        seed: u64,
+        experience: Option<&Experience>,
+    ) -> Result<Self, AgentError> {
+        let mut planner = Self::new(run_key, tool_names, seed)?;
+        if let Some(experience) = experience {
+            for (tool, stat) in &experience.tools {
+                planner.tool_stats.insert(
+                    tool.clone(),
+                    ToolStat {
+                        attempts: stat.attempts,
+                        successes: stat.successes,
+                        failures: stat.failures,
+                        consecutive_failures: 0,
+                    },
+                );
+            }
+            for (signature, stat) in &experience.signatures {
+                planner.signature_stats.insert(
+                    signature.clone(),
+                    ToolStat {
+                        attempts: stat.attempts,
+                        successes: stat.successes,
+                        failures: stat.failures,
+                        consecutive_failures: 0,
+                    },
+                );
+            }
+        }
+        Ok(planner)
     }
 
     /// Rebuilds a planner from a snapshot.
@@ -230,6 +275,7 @@ impl NarsPlanner {
             planner.add_task_goal(goal)?;
             planner.task_goal = Some(goal.clone());
         }
+        planner.task_goal_type = snapshot.task_goal_type;
         Ok(planner)
     }
 
@@ -244,6 +290,7 @@ impl NarsPlanner {
             tool_stats: self.tool_stats.clone(),
             signature_stats: self.signature_stats.clone(),
             task_goal: self.task_goal.clone(),
+            task_goal_type: self.task_goal_type,
             decision_count: self.decision_count,
         }
     }
@@ -290,6 +337,7 @@ impl NarsPlanner {
         for fact in &facts {
             self.commit_fact(fact)?;
         }
+        self.task_goal_type = Some(task.goal.goal_type);
         let goal = NarsGoal {
             id: format!("{task_key}_goal"),
             description: task.goal.description.clone(),
@@ -374,6 +422,7 @@ impl NarsPlanner {
                 rationale: "no candidate action could be encoded for NARS".to_owned(),
                 goal_term,
                 source: DecisionSource::None,
+                plan: None,
             });
         }
 
@@ -428,6 +477,7 @@ impl NarsPlanner {
                     ),
                     goal_term,
                     source: DecisionSource::Nars,
+                    plan: None,
                 });
             }
         }
@@ -459,6 +509,7 @@ impl NarsPlanner {
             } else {
                 DecisionSource::None
             },
+            plan: None,
         })
     }
 
@@ -582,6 +633,14 @@ impl NarsPlanner {
         if let Some(stat) = self.tool_stats.get(&candidate.tool) {
             let prior = stat.success_rate();
             score = score * 0.85 + prior * 0.15;
+            if stat.failures > 0 {
+                let penalty = 0.06 * f64::from(stat.failures.min(4));
+                score -= penalty;
+                notes.push(format!(
+                    "tool failed {} time(s) (-{penalty:.2})",
+                    stat.failures
+                ));
+            }
             notes.push(format!(
                 "tool history {}/{} ({prior:.2})",
                 stat.successes, stat.attempts
@@ -784,6 +843,32 @@ mod tests {
         let left_decision = left.decide(1, &candidates).unwrap();
         let right_decision = right.decide(1, &candidates).unwrap();
         assert_eq!(left_decision, right_decision);
+    }
+
+    #[test]
+    fn workspace_experience_penalizes_unreliable_tools() {
+        let mut experience = Experience::new("/tmp/ws");
+        for _ in 0..5 {
+            experience.record_tool("search", false);
+        }
+        let mut planner = NarsPlanner::new_with_experience(
+            "run_demo",
+            ["read_file".to_owned(), "search".to_owned()],
+            7,
+            Some(&experience),
+        )
+        .unwrap();
+        planner.commit_task(&task(), 0.8).unwrap();
+        let candidates = vec![
+            CandidateAction::new("search")
+                .with_arguments(json!({"query": "parser"}))
+                .with_confidence(0.9),
+            CandidateAction::new("read_file")
+                .with_arguments(json!({"path": "src/lib.rs"}))
+                .with_confidence(0.7),
+        ];
+        let decision = planner.decide(1, &candidates).unwrap();
+        assert_eq!(decision.selected.as_ref().unwrap().tool, "read_file");
     }
 
     #[test]

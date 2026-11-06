@@ -16,11 +16,13 @@
 
 pub mod actor;
 pub mod driver;
+pub mod plan;
 pub mod planner;
 pub mod prompt;
 pub mod replay;
 
 pub use actor::{ActorConfig, ActorOutput, Command, SessionActor};
 pub use driver::{AgentRuntime, NoopSink, RunHandle, RuntimeConfig, RuntimeSink};
+pub use plan::{PlanStage, PlanTransition, StageKind, StageStatus, TaskPlan};
 pub use planner::{NarsPlanner, PlannerSnapshot, ToolStat};
 pub use replay::{project, verify_snapshot};

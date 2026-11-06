@@ -157,6 +157,7 @@ export function applyEnvelope(state: AppState, envelope: WireEnvelope): AppState
         updateRun(next, runId, (run) => {
           run.step = Math.max(run.step, decision.step ?? 0);
           run.decisions = [...run.decisions, decision].slice(-40);
+          if (decision.plan) run.plan = decision.plan;
         });
         push(next, { kind: "decision", id, runId, decision, ts });
       }
@@ -224,6 +225,7 @@ export function applyEnvelope(state: AppState, envelope: WireEnvelope): AppState
         const observation = event.observation;
         updateRun(next, runId, (run) => {
           run.observations = [...run.observations, observation].slice(-40);
+          if (event.plan) run.plan = event.plan;
           const existing = run.toolCalls[observation.call_id];
           if (existing) {
             run.toolCalls = {

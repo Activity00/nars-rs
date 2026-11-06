@@ -1,0 +1,13 @@
+{
+  "id": "plan_order",
+  "category": "nars_tasks",
+  "prompt": "Rename alpha to beta in src/lib.rs and verify the result.",
+  "setup": {"fixture": "rename_symbol"},
+  "limits": {"max_steps": 10, "max_model_calls": 10},
+  "expect": {
+    "ordered_tools": ["list_files", "read_file", "apply_patch", "cargo_check"],
+    "model_attempted_patch_first": true,
+    "plan_stages": ["investigate", "change", "verify", "answer"],
+    "final_status": "completed"
+  }
+}

@@ -101,10 +101,33 @@ NARS 自身的决策搜索会选择得分最高的前置条件并调用注册的
 `DecisionSource::Fallback` 并选择得分最高的候选。该降级会出现在事件日志中，
 不会被伪装成 NARS 决策。
 
-### 工具历史
+### 任务计划（Phase 6）
+
+运行时还持有一个线性阶段计划，例如：
+
+```text
+modify_code: investigate → change → verify → answer
+```
+
+阶段决定“哪些动作在原则上可以发生”，模型只提供具体候选与参数：
+
+- `apply_patch` 只在 `change` 阶段可用；
+- `cargo_check`/`cargo_test` 只在 `verify` 阶段可用；
+- `investigate` 只有成功的 `read_file` 才算完成，list/search 只算进展；
+- `verify` 失败会退回 `change`；
+- 计划未完成时的 `final_answer` 会被拒绝并重新请求。
+
+模型提出越界候选时，运行时会把它们标记为 `deferred`，并注入安全的只读/验证
+fallback，仍由 NARS 选择。详见 [ADR 0004](../decisions/0004-task-plan.md)。
+
+### 工具历史与经验
 
 `ToolStat` 记录每个工具与每个“工具+参数签名”的尝试、成功、失败和连续失败。
 下一轮评分会对失败签名扣分，对成功签名加分。该状态进入 Snapshot，恢复后继续生效。
+
+跨 Run 的经验按 workspace 保存在
+`.nars-agent/experience/<hash>.json`，新 Run 用
+`NarsPlanner::new_with_experience` 载入，从而复用同一项目的工具可靠性历史。
 
 ### 事实日志
 
@@ -177,6 +200,6 @@ UI 不直接访问文件系统，也不自行推断执行结果；所有内容�
 | 3 Tool Broker | ✅ 六个内置工具 / 沙箱 / 审批 / 超时 / 截断 |
 | 4 API + Web UI | ✅ Axum + SSE + React 三栏 |
 | 5 持久化与恢复 | ✅ JSONL + Snapshot + 重放 + checkpoint resume；SQLite 预留 |
-| 6 NARS 原生任务调度 | 🚧 历史成功率、失败降权、fallback 已实现；多步规划待增强 |
+| 6 NARS 原生任务调度 | ✅ 线性阶段计划、前置条件、失败回退、软时间预算、workspace 经验复用 |
 | 7 MCP | ⏳ |
 | 8 评测与发布 | 🚧 测试基线已建立，评测集待补 |

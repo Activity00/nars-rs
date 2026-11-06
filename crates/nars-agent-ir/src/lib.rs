@@ -29,7 +29,7 @@ pub use narsese::{NarsTerm, atomize, keyed_atom, short_hash};
 pub use state::{ChatMessage, ChatRole, RunState, RunStatus, TaskSpec};
 pub use tool::{
     Artifact, DecisionSource, Diff, NarsDecision, NarsFact, NarsGoal, Observation, Outcome,
-    ScoredCandidate, SelectedAction, SideEffect, ToolCall, ToolManifest, ToolPreview, ToolResult,
-    ToolStatus, TruthValue,
+    PlanStageView, ScoredCandidate, SelectedAction, SideEffect, TaskPlanView, ToolCall,
+    ToolManifest, ToolPreview, ToolResult, ToolStatus, TruthValue,
 };
 pub use validation::{Severity, ValidatedIr, ValidationContext, ValidationIssue, validate_ir};

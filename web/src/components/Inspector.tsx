@@ -61,6 +61,36 @@ export function Inspector({ run, busy, onPause, onResume, onCancel }: Props) {
         </div>
       </section>
 
+      {run.plan && run.plan.stages.length > 0 && (
+        <section>
+          <h3>Task plan</h3>
+          <ol className="plan">
+            {run.plan.stages.map((stage) => (
+              <li className={`plan-stage plan-${stage.status}`} key={stage.id}>
+                <span className="plan-dot" />
+                <span className="plan-label">{stage.label}</span>
+                <span className="muted small">
+                  {stage.status}
+                  {stage.overdue ? " · overdue" : ""}
+                </span>
+              </li>
+            ))}
+          </ol>
+          {run.plan.notes.length > 0 && (
+            <div className="plan-notes">{run.plan.notes.slice(-3).join(" · ")}</div>
+          )}
+          {run.plan.working_memory.length > 0 && (
+            <div className="facts">
+              {run.plan.working_memory.map((file) => (
+                <code className="fact" key={file}>
+                  {file}
+                </code>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       <section>
         <h3>NARS</h3>
         <div className="kv">
