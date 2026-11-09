@@ -14,6 +14,41 @@ export interface GoalSpec {
   description: string;
 }
 
+export interface CompareFile {
+  path: string;
+  added: number;
+  removed: number;
+}
+
+export interface CompareMetrics {
+  status: string;
+  steps: number;
+  model_calls: number;
+  tool_calls: number;
+  approvals: number;
+  fallbacks: number;
+  decisions: number;
+  observations: number;
+  files: CompareFile[];
+  tools: Record<string, number>;
+  final_answer?: string | null;
+  duration_ms: number;
+}
+
+export interface CompareSide {
+  session: SessionMeta;
+  run_id: string;
+  metrics: CompareMetrics;
+}
+
+export interface CompareResponse {
+  left: CompareSide;
+  right: CompareSide;
+  shared_files: string[];
+  only_left: string[];
+  only_right: string[];
+}
+
 export interface RunSummary {
   run_id: string;
   status: string;

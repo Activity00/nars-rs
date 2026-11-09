@@ -21,6 +21,7 @@ use nars_tools::policy::{ApprovalMode, Policy, PolicyConfig};
 use nars_tools::{BrokerConfig, Sandbox, Tool, ToolBroker};
 use tokio::sync::broadcast;
 
+use crate::compare::{CompareResponse, compare as build_comparison};
 use crate::error::ApiError;
 
 /// Server configuration.
@@ -362,6 +363,36 @@ impl AppState {
         self.store
             .touch_session(&branch.session_id, now_ms(), Some(&title))?;
         Ok((branch, new_run_id, copied))
+    }
+
+    /// Compares the newest run of a session with its parent/source run.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for missing sessions or sessions without runs.
+    pub fn compare_sessions(
+        &self,
+        left: &SessionId,
+        right: &SessionId,
+    ) -> Result<CompareResponse, ApiError> {
+        if left == right {
+            return Err(ApiError::BadRequest(
+                "cannot compare a session with itself".to_owned(),
+            ));
+        }
+        let left_meta = self
+            .store
+            .get_session(left)?
+            .ok_or_else(|| ApiError::NotFound(format!("session `{left}` does not exist")))?;
+        let right_meta = self
+            .store
+            .get_session(right)?
+            .ok_or_else(|| ApiError::NotFound(format!("session `{right}` does not exist")))?;
+        let left_events = self.store.read_events(left)?;
+        let right_events = self.store.read_events(right)?;
+        build_comparison(&left_meta, &left_events, &right_meta, &right_events).ok_or_else(|| {
+            ApiError::NotFound("comparison requires a completed run in each session".to_owned())
+        })
     }
 
     /// Deletes a session and its in-memory run handles.

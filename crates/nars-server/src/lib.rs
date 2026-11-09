@@ -5,6 +5,7 @@
 //! pure consumer of that stream.
 
 pub mod auth;
+pub mod compare;
 pub mod error;
 pub mod routes;
 pub mod sse;

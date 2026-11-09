@@ -36,6 +36,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/sessions/{id}/messages", post(send_message))
         .route("/api/sessions/{id}/branch", post(branch_session))
+        .route("/api/sessions/{id}/compare", get(compare_sessions))
         .route("/api/sessions/{id}/runs", get(list_runs))
         .route("/api/sessions/{id}/events", get(sse::session_events))
         .route("/api/sessions/{id}/replay", get(replay_session))
@@ -228,6 +229,21 @@ async fn delete_session(
     let session_id = SessionId::from_static(session_id);
     state.delete_session(&session_id)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize)]
+struct CompareQuery {
+    with: String,
+}
+
+async fn compare_sessions(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+    Query(query): Query<CompareQuery>,
+) -> Result<Json<crate::compare::CompareResponse>, ApiError> {
+    let left = SessionId::from_static(session_id);
+    let right = SessionId::from_static(query.with);
+    Ok(Json(state.compare_sessions(&left, &right)?))
 }
 
 #[derive(Debug, Deserialize)]

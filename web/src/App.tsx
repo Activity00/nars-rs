@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { api, eventStreamUrl, getToken, setToken } from "./api";
 import { initialState, reducer } from "./store";
-import type { RunSummary, SessionMeta, ToolManifest } from "./types";
+import type {
+  CompareResponse,
+  RunSummary,
+  SessionMeta,
+  ToolManifest,
+} from "./types";
+import { ComparePanel } from "./components/ComparePanel";
 import { Composer } from "./components/Composer";
 import { Inspector } from "./components/Inspector";
 import { Sidebar } from "./components/Sidebar";
@@ -13,6 +19,8 @@ export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [busyCallId, setBusyCallId] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [comparing, setComparing] = useState(false);
+  const [comparison, setComparison] = useState<CompareResponse>();
   const [token, setTokenValue] = useState(getToken());
 
   const selectedId = state.selected?.sessionId;
@@ -52,6 +60,10 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    setComparison(undefined);
+  }, [selectedId]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -213,6 +225,22 @@ export default function App() {
     }
   }, [selectedId, run, refreshSessions]);
 
+  const compare = useCallback(async () => {
+    const selected = state.sessions.find(
+      (item: SessionMeta) => item.session_id === selectedId,
+    );
+    if (!selectedId || !selected?.parent_session_id) return;
+    setComparing(true);
+    try {
+      const result = await api.compare(selectedId, selected.parent_session_id);
+      setComparison(result);
+    } catch (error) {
+      dispatch({ type: "error", message: String(error) });
+    } finally {
+      setComparing(false);
+    }
+  }, [selectedId, state.sessions]);
+
   const control = useCallback(
     async (action: "pause" | "resume" | "cancel") => {
       if (!run) return;
@@ -353,6 +381,8 @@ export default function App() {
         onResume={() => void control("resume")}
         onCancel={() => void control("cancel")}
         onBranch={() => void branch()}
+        onCompare={parentSession ? () => void compare() : undefined}
+        comparing={comparing}
         parent={parentSession}
         branchSource={session?.branched_from_run_id ?? undefined}
         childCount={branchChildren}
@@ -361,6 +391,11 @@ export default function App() {
             ? () => selectSession(session.parent_session_id!)
             : undefined
         }
+      />
+
+      <ComparePanel
+        comparison={comparison}
+        onClose={() => setComparison(undefined)}
       />
     </div>
   );

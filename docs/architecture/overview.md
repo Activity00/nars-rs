@@ -186,8 +186,9 @@ Run 历史不依赖进程内状态：`summarize_runs` 从事件日志投影 `Run
 分支通过 `POST /api/sessions/{id}/branch` 创建：复制选中 Run 起点之前的事件，
 重写 run_id / session_id，写入 `parent_session_id` / `branched_from_run_id`，然后重新执行
 该 Run 的任务。`PATCH /api/sessions/{id}` 重命名，`DELETE /api/sessions/{id}` 删除。
-详见 [ADR 0007](../decisions/0007-session-branching.md) 与
-[ADR 0008](../decisions/0008-session-lifecycle.md)。
+详见 [ADR 0007](../decisions/0007-session-branching.md)、
+[ADR 0008](../decisions/0008-session-lifecycle.md) 与
+[ADR 0009](../decisions/0009-run-comparison.md)。
 
 ## 8. Web UI
 
@@ -197,7 +198,7 @@ Run 历史不依赖进程内状态：`summarize_runs` 从事件日志投影 `Run
    分支显示 `↳`，选中会话可 Rename/Delete；
 2. 中：Run 选择器 + 对话与执行时间线（NARS 决策、工具卡片、diff、审批、状态）；
    可选择 `All runs` 或单个 Run，时间线按 Run 过滤；终止 Run 可 **Branch & retry**；
-   顶栏 **branch of ...** 跳转父会话；
+   顶栏 **branch of ...** 跳转父会话；Inspector 可 **Compare with parent** 查看 Runs 指标对比；
 3. 右：当前目标、NARS goal atom、事实、候选评分、文件变化、token、控制按钮。
 
 UI 不直接访问文件系统，也不自行推断执行结果；所有内容来自 SSE 事件。

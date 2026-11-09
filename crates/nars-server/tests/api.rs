@@ -673,6 +673,28 @@ async fn branches_a_historical_run_into_a_new_session() {
     assert!(summaries.iter().any(|run| run["run_id"] == branch_run));
     assert!(!summaries.iter().any(|run| run["run_id"] == parent_runs[1]));
 
+    let (status, comparison) = request(
+        &app,
+        Method::GET,
+        &format!("/api/sessions/{branch_session}/compare?with={parent}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{comparison}");
+    assert_eq!(comparison["left"]["run_id"], branch_run);
+    assert_eq!(comparison["right"]["run_id"], parent_runs[1]);
+    assert_eq!(comparison["left"]["metrics"]["status"], "completed");
+    assert_eq!(comparison["right"]["metrics"]["status"], "completed");
+    assert_eq!(comparison["left"]["metrics"]["final_answer"], "branched");
+    assert_eq!(comparison["right"]["metrics"]["final_answer"], "second");
+    assert!(
+        comparison["left"]["metrics"]["model_calls"]
+            .as_u64()
+            .unwrap()
+            >= 1
+    );
+
     let branch_events = reopened
         .read_events(&SessionId::from_static(branch_session.clone()))
         .unwrap();

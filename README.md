@@ -19,7 +19,8 @@ performs real work. The model can never call a tool directly. Tools can be built
 MCP Streamable HTTP. Sessions persist as JSONL or SQLite. The web UI can switch
 between all runs or a single run, including runs restored after a restart. Sessions
 can be branched (with recorded lineage, a nested branch tree, and parent
-navigation), renamed, and deleted.
+navigation), renamed, and deleted. Branch runs can be compared with their
+parent source run across status, tools, fallbacks, files, and final answer.
 
 ```text
 user message → model (Agent IR) → Rust validation → NARS goals/facts
@@ -35,7 +36,8 @@ user message → model (Agent IR) → Rust validation → NARS goals/facts
   [0005](docs/decisions/0005-mcp.md),
   [0006](docs/decisions/0006-evaluation.md),
   [0007](docs/decisions/0007-session-branching.md),
-  [0008](docs/decisions/0008-session-lifecycle.md)
+  [0008](docs/decisions/0008-session-lifecycle.md),
+  [0009](docs/decisions/0009-run-comparison.md)
 - Architecture overview: [docs/architecture/overview.md](docs/architecture/overview.md)
 - Event protocol: [docs/protocol/events.md](docs/protocol/events.md)
 - 中文快速开始: [docs/agent/QUICKSTART_ZH.md](docs/agent/QUICKSTART_ZH.md)

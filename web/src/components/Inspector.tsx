@@ -9,6 +9,8 @@ interface Props {
   onResume: () => void;
   onCancel: () => void;
   onBranch?: () => void;
+  onCompare?: () => void;
+  comparing?: boolean;
   parent?: SessionMeta;
   branchSource?: string;
   childCount?: number;
@@ -22,6 +24,8 @@ export function Inspector({
   onResume,
   onCancel,
   onBranch,
+  onCompare,
+  comparing,
   parent,
   branchSource,
   childCount = 0,
@@ -95,6 +99,15 @@ export function Inspector({
               </button>
             ) : (
               <div className="muted small">Root session</div>
+            )}
+            {parent && onCompare && (
+              <button
+                className="btn ghost small"
+                disabled={comparing}
+                onClick={onCompare}
+              >
+                {comparing ? "Comparing…" : "Compare with parent"}
+              </button>
             )}
             {childCount > 0 && (
               <div className="muted small">
