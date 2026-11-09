@@ -15,7 +15,8 @@ and test can be checked against a fixed, auditable reference.
 `nars-agent` is a development agent built on top of `nars-core`. NARS owns goals,
 facts, priorities, historical tool outcomes, and the next-action decision. A model
 only produces a validated **Agent IR** proposal; a policy-checked tool broker
-performs real work. The model can never call a tool directly.
+performs real work. The model can never call a tool directly. Tools can be built-in, MCP stdio, or
+MCP Streamable HTTP. Sessions persist as JSONL or SQLite.
 
 ```text
 user message → model (Agent IR) → Rust validation → NARS goals/facts
@@ -50,6 +51,9 @@ cd web && npm install && npm run dev     # http://localhost:5173
 
 # 5. Or build the UI once and let narsd serve it at :8787
 cd web && npm run build && cd .. && cargo run -p narsd
+
+# 6. SQLite session storage
+cargo run -p narsd -- --sqlite .nars-agent/sessions.db
 ```
 
 Run the deterministic evaluation set (fixtures, scripted model, real runtime):
@@ -58,6 +62,10 @@ Run the deterministic evaluation set (fixtures, scripted model, real runtime):
 cargo run -p nars-eval -- --provider scripted \
   --out target/eval-report.json --markdown-out target/eval-report.md
 ```
+
+Quality gates: `./scripts/agent-check.sh` runs fmt, agent tests, the deterministic
+evaluation, and the web build; `--full` adds all workspace release tests. CI uses
+[.github/workflows/nars-agent.yml](.github/workflows/nars-agent.yml).
 
 The focused test suite for the agent stack:
 

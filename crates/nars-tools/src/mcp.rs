@@ -10,7 +10,7 @@
 //! [`SideEffect::ExternalSideEffect`] and require approval unless the operator
 //! explicitly relaxes the configuration.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -69,8 +69,15 @@ pub enum McpError {
 pub struct McpServerConfig {
     /// Server name used as a tool-name prefix.
     pub name: String,
-    /// Executable to spawn.
+    /// Executable to spawn for stdio transport.
+    #[serde(default)]
     pub command: String,
+    /// Streamable HTTP endpoint. When set, `command` is ignored.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Extra HTTP headers for the HTTP transport.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
     /// Command arguments.
     #[serde(default)]
     pub args: Vec<String>,
@@ -107,6 +114,8 @@ impl std::fmt::Debug for McpServerConfig {
             .field("name", &self.name)
             .field("command", &self.command)
             .field("args", &self.args)
+            .field("url", &self.url)
+            .field("headers", &self.headers.keys().collect::<Vec<_>>())
             .field("env_keys", &self.env.keys().collect::<Vec<_>>())
             .field("side_effect", &self.side_effect)
             .field("timeout_ms", &self.timeout_ms)
@@ -120,6 +129,8 @@ impl Default for McpServerConfig {
         Self {
             name: "mcp".to_owned(),
             command: String::new(),
+            url: None,
+            headers: BTreeMap::new(),
             args: Vec::new(),
             env: BTreeMap::new(),
             side_effect: SideEffect::ExternalSideEffect,
@@ -493,6 +504,20 @@ impl Tool for McpTool {
     }
 }
 
+/// Connects to an MCP server over stdio or HTTP.
+///
+/// # Errors
+///
+/// Returns an error when the transport cannot start, initialization fails, or
+/// `tools/list` is malformed.
+pub fn connect(config: &McpServerConfig) -> Result<Vec<Arc<dyn Tool>>, McpError> {
+    if let Some(url) = &config.url {
+        let transport = HttpTransport::new(url, &config.headers, config.timeout_ms)?;
+        return connect_transport(config, transport);
+    }
+    connect_stdio(config)
+}
+
 /// Connects to a stdio MCP server and converts all of its tools.
 ///
 /// # Errors
@@ -501,6 +526,13 @@ impl Tool for McpTool {
 /// or `tools/list` is malformed.
 pub fn connect_stdio(config: &McpServerConfig) -> Result<Vec<Arc<dyn Tool>>, McpError> {
     let transport = StdioTransport::spawn(config)?;
+    connect_transport(config, transport)
+}
+
+fn connect_transport<T: McpTransport + 'static>(
+    config: &McpServerConfig,
+    transport: T,
+) -> Result<Vec<Arc<dyn Tool>>, McpError> {
     let client = Arc::new(McpClient::connect(
         config.name.clone(),
         transport,
@@ -556,6 +588,179 @@ fn sanitize(value: &str) -> String {
         }
     }
     output.trim_matches('_').to_owned()
+}
+
+/// Streamable HTTP transport for MCP.
+///
+/// Sends JSON-RPC messages with `Accept: application/json, text/event-stream`,
+/// handles both JSON and SSE response bodies, and keeps the `Mcp-Session-Id`
+/// returned by `initialize`.
+pub struct HttpTransport {
+    client: reqwest::blocking::Client,
+    url: String,
+    headers: reqwest::header::HeaderMap,
+    session: Option<String>,
+    queue: VecDeque<Value>,
+}
+
+impl std::fmt::Debug for HttpTransport {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("HttpTransport")
+            .field("url", &self.url)
+            .field("session", &self.session.is_some())
+            .finish()
+    }
+}
+
+impl HttpTransport {
+    /// Builds an HTTP transport for one endpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid URLs, headers, or client setup.
+    pub fn new(
+        url: &str,
+        headers: &BTreeMap<String, String>,
+        timeout_ms: u64,
+    ) -> Result<Self, McpError> {
+        if url.trim().is_empty() {
+            return Err(McpError::Protocol("MCP HTTP URL is empty".to_owned()));
+        }
+        let mut header_map = reqwest::header::HeaderMap::new();
+        for (key, value) in headers {
+            let name =
+                reqwest::header::HeaderName::from_bytes(key.as_bytes()).map_err(|error| {
+                    McpError::Protocol(format!("invalid MCP header `{key}`: {error}"))
+                })?;
+            let value = reqwest::header::HeaderValue::from_str(value).map_err(|error| {
+                McpError::Protocol(format!("invalid MCP header value: {error}"))
+            })?;
+            header_map.insert(name, value);
+        }
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_millis(timeout_ms.max(1)))
+            .build()
+            .map_err(|error| McpError::Io(format!("failed to build MCP HTTP client: {error}")))?;
+        Ok(Self {
+            client,
+            url: url.to_owned(),
+            headers: header_map,
+            session: None,
+            queue: VecDeque::new(),
+        })
+    }
+}
+
+impl McpTransport for HttpTransport {
+    fn send(&mut self, message: &Value) -> Result<(), McpError> {
+        let id = message.get("id").and_then(Value::as_u64);
+        let mut request = self
+            .client
+            .post(&self.url)
+            .header(
+                reqwest::header::ACCEPT,
+                "application/json, text/event-stream",
+            )
+            .header("MCP-Protocol-Version", PROTOCOL_VERSION)
+            .headers(self.headers.clone())
+            .json(message);
+        if let Some(session) = &self.session {
+            request = request.header("Mcp-Session-Id", session);
+        }
+        let response = request.send().map_err(|error| {
+            if error.is_timeout() {
+                McpError::Io(format!("MCP HTTP request timed out: {error}"))
+            } else {
+                McpError::Io(format!("MCP HTTP request failed: {error}"))
+            }
+        })?;
+        if let Some(session) = response
+            .headers()
+            .get("Mcp-Session-Id")
+            .and_then(|value| value.to_str().ok())
+        {
+            self.session = Some(session.to_owned());
+        }
+        let status = response.status();
+        if status.as_u16() == 202 {
+            return Ok(());
+        }
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            let excerpt = body.chars().take(500).collect::<String>();
+            return Err(McpError::Protocol(format!("MCP HTTP {status}: {excerpt}")));
+        }
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if content_type.contains("text/event-stream") {
+            self.read_sse(response, id)?;
+        } else {
+            let text = response
+                .text()
+                .map_err(|error| McpError::Io(error.to_string()))?;
+            let value: Value = serde_json::from_str(&text)
+                .map_err(|error| McpError::Protocol(format!("invalid MCP HTTP JSON: {error}")))?;
+            if let Some(items) = value.as_array() {
+                for item in items {
+                    self.queue.push_back(item.clone());
+                }
+            } else {
+                self.queue.push_back(value);
+            }
+        }
+        Ok(())
+    }
+
+    fn receive(&mut self, _timeout: Duration) -> Result<Value, McpError> {
+        self.queue
+            .pop_front()
+            .ok_or_else(|| McpError::Protocol("MCP HTTP response queue is empty".to_owned()))
+    }
+}
+
+impl HttpTransport {
+    fn read_sse(
+        &mut self,
+        response: reqwest::blocking::Response,
+        expected_id: Option<u64>,
+    ) -> Result<(), McpError> {
+        let reader = BufReader::new(response);
+        let mut data = String::new();
+        for line in reader.lines() {
+            let line = line.map_err(|error| McpError::Io(error.to_string()))?;
+            if line.is_empty() {
+                if !data.is_empty() {
+                    if let Ok(value) = serde_json::from_str::<Value>(&data) {
+                        let matched = expected_id
+                            .is_some_and(|id| value.get("id").and_then(Value::as_u64) == Some(id));
+                        self.queue.push_back(value);
+                        data.clear();
+                        if matched {
+                            return Ok(());
+                        }
+                    } else {
+                        data.clear();
+                    }
+                }
+            } else if let Some(rest) = line.strip_prefix("data:") {
+                if !data.is_empty() {
+                    data.push('\n');
+                }
+                data.push_str(rest.trim_start());
+            }
+        }
+        if !data.is_empty()
+            && let Ok(value) = serde_json::from_str::<Value>(&data)
+        {
+            self.queue.push_back(value);
+        }
+        Ok(())
+    }
 }
 
 /// Newline-delimited JSON-RPC transport over a child process.
@@ -826,6 +1031,84 @@ mod tests {
             McpTool::new(Arc::new(FakeClient { error: true }), &description, &config).unwrap();
         let result = tool.execute(&tool_call(), &context);
         assert!(!result.is_success());
+    }
+
+    #[test]
+    fn parses_http_server_without_command() {
+        let object = r#"{"servers":[{"name":"remote","url":"http://127.0.0.1:1234/mcp","side_effect":"read_only"}]}"#;
+        let servers = parse_servers(object).unwrap();
+        assert_eq!(servers[0].url.as_deref(), Some("http://127.0.0.1:1234/mcp"));
+        assert_eq!(servers[0].side_effect, SideEffect::ReadOnly);
+        assert!(servers[0].command.is_empty());
+    }
+
+    #[test]
+    fn http_round_trip_with_python_server() {
+        let python_ok = std::process::Command::new("python3")
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        if !python_ok {
+            return;
+        }
+        let script = r#"
+import http.server, json, sys
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get('Content-Length', 0))
+        message = json.loads(self.rfile.read(length))
+        if message.get('id') is None:
+            self.send_response(202)
+            self.end_headers()
+            return
+        method = message.get('method')
+        if method == 'initialize':
+            result = {'protocolVersion': '2024-11-05', 'capabilities': {}, 'serverInfo': {'name': 'pyhttp', 'version': '0'}}
+        elif method == 'tools/list':
+            result = {'tools': [{'name': 'echo', 'description': 'echo', 'inputSchema': {'type': 'object'}}]}
+        else:
+            result = {}
+        body = json.dumps({'jsonrpc': '2.0', 'id': message['id'], 'result': result}).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Mcp-Session-Id', 'session-1')
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+print(server.server_address[1], flush=True)
+server.serve_forever()
+"#;
+        let mut child = std::process::Command::new("python3")
+            .args(["-u", "-c", script])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut port_line = String::new();
+        BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut port_line)
+            .unwrap();
+        let port: u16 = port_line.trim().parse().unwrap();
+        let config = McpServerConfig {
+            name: "pyhttp".to_owned(),
+            command: String::new(),
+            url: Some(format!("http://127.0.0.1:{port}/mcp")),
+            timeout_ms: 5_000,
+            ..McpServerConfig::default()
+        };
+        let tools = connect(&config).unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].manifest().name, "mcp_pyhttp_echo");
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     #[test]

@@ -127,6 +127,21 @@ NARS_AGENT_MCP_SERVERS='[{"name":"files","command":"npx","args":["-y","@modelcon
   cargo run -p narsd
 ```
 
+HTTP MCP server：
+
+```json
+{
+  "servers": [
+    {
+      "name": "remote",
+      "url": "https://example.com/mcp",
+      "headers": {"authorization": "Bearer ..."},
+      "requires_approval": true
+    }
+  ]
+}
+```
+
 工具会以 `mcp_<server>_<tool>` 出现在 `/api/tools`、提示词和 Web UI 中。默认外部副作用 + 审批；
 连接失败只记录 warning，不影响 `narsd` 启动。详见 [ADR 0005](../decisions/0005-mcp.md)。
 
@@ -199,6 +214,7 @@ curl -X POST http://127.0.0.1:8787/api/sessions/<session_id>/resume
 - `events.jsonl` 是事实来源；
 - `snapshot.json` 是 checkpoint，含 `state_hash`；
 - `../experience/<hash>.json` 保存同一 workspace 的工具成功率，供后续 Run 复用；
+- 也可以使用 SQLite：`cargo run -p narsd -- --sqlite .nars-agent/sessions.db`；
 - 服务重启后会话仍在；
 - 同一事件流重放得到相同 `state_hash`（集成测试覆盖）。
 
@@ -217,12 +233,15 @@ cd web && npm run build
 # 确定性评测集（6 个任务）
 cargo run -p nars-eval -- --provider scripted \
   --out target/eval-report.json --markdown-out target/eval-report.md
+
+# 本地完整门禁（fmt + agent tests + eval + web build；--full 包含全工作区 release 测试）
+./scripts/agent-check.sh --full
 ```
 
 ## 10. 当前限制
 
 - NARS 已具备线性阶段计划（investigate → change → verify）、阶段门控、失败回退和 workspace 经验复用；任意 DAG 与并行子任务待增强；
-- 持久化默认文件实现，SQLite 适配器预留；
+- 持久化支持 JSONL 文件与 SQLite；
 - 沙箱是路径级，不是容器级；不要在生产环境运行不可信任务；
 - MCP、浏览器、Git 提交尚未接入；
 - 第一版不做多 Agent、向量库、桌面端。

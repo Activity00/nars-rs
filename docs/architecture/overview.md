@@ -157,6 +157,8 @@ Pending → Planning → (AwaitingApproval) → ExecutingTool → Planning → �
 
 ## 7. 持久化布局
 
+默认文件存储：
+
 ```text
 .nars-agent/sessions/
 └── ses_<id>/
@@ -165,7 +167,16 @@ Pending → Planning → (AwaitingApproval) → ExecutingTool → Planning → �
     └── snapshot.json   # 最新 checkpoint（RunState + PlannerSnapshot + hash + last_seq）
 ```
 
-`SessionStore` 是 trait，文件实现为默认；SQLite 适配器可在不改运行时的情况下加入。
+SQLite 存储（`narsd --sqlite .nars-agent/sessions.db`）：
+
+```sql
+sessions(session_id, workspace, title, created_at_ms, updated_at_ms)
+events(session_id, seq, timestamp_ms, event_json)
+snapshots(session_id, run_id, state_hash, last_seq, created_at_ms, snapshot_json)
+```
+
+`SessionStore` 是 trait，文件与 SQLite 实现可互换，运行时无感知。SQLite 适配器
+通过独立 worker 线程运行 `sqlx` 的 current-thread runtime，以保持同步 trait。
 
 ## 8. Web UI
 
@@ -192,7 +203,7 @@ UI 不直接访问文件系统，也不自行推断执行结果；所有内容�
 
 ## 9.5 MCP 工具
 
-`narsd --mcp-config <file>` 或 `NARS_AGENT_MCP_SERVERS` 可以连接 stdio MCP server：
+`narsd --mcp-config <file>` 或 `NARS_AGENT_MCP_SERVERS` 可以连接 stdio 或 HTTP MCP server：
 
 ```text
 MCP tools/list → ToolManifest(mcp_<server>_<tool>)
@@ -223,7 +234,7 @@ cargo run -p nars-eval -- --provider scripted
 | 2 真实模型 | ✅ OpenAI-compatible / Anthropic / Ollama / 重试 / 校验 |
 | 3 Tool Broker | ✅ 六个内置工具 / 沙箱 / 审批 / 超时 / 截断 |
 | 4 API + Web UI | ✅ Axum + SSE + React 三栏 |
-| 5 持久化与恢复 | ✅ JSONL + Snapshot + 重放 + checkpoint resume；SQLite 预留 |
+| 5 持久化与恢复 | ✅ JSONL / SQLite + Snapshot + 重放 + checkpoint resume |
 | 6 NARS 原生任务调度 | ✅ 线性阶段计划、前置条件、失败回退、软时间预算、workspace 经验复用 |
-| 7 MCP | ✅ stdio 客户端、工具转换、外部权限；HTTP transport 待补 |
-| 8 评测与发布 | ✅ `nars-eval` runner、6 个固定任务、指标与报告；CI 发布流水线待补 |
+| 7 MCP | ✅ stdio + Streamable HTTP、工具转换、外部权限；GET stream/续传待补 |
+| 8 评测与发布 | ✅ `nars-eval` runner、6 个固定任务、指标与报告、GitHub Actions 工作流；真实模型基准待补 |

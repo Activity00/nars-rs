@@ -8,7 +8,7 @@ use nars_agent_ir::{AgentIr, CandidateAction, FinalAnswer, GoalSpec, GoalType, T
 use nars_agent_runtime::ActorConfig;
 use nars_model::{ModelProvider, ScriptedProvider};
 use nars_server::{AppState, ServerConfig, build_router};
-use nars_session::FileSessionStore;
+use nars_session::{FileSessionStore, SqliteSessionStore};
 use nars_tools::policy::ApprovalMode;
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -342,7 +342,6 @@ impl nars_tools::manifest::Tool for FakeMcpTool {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn extra_mcp_tools_are_exposed_by_the_api() {
-    let workspace = TempDir::new().unwrap();
     let store_dir = TempDir::new().unwrap();
     let store = Arc::new(FileSessionStore::new(store_dir.path()).unwrap());
     let provider = Arc::new(ScriptedProvider::new(Vec::new()));
@@ -370,4 +369,83 @@ async fn extra_mcp_tools_are_exposed_by_the_api() {
         .filter_map(|tool| tool["name"].as_str())
         .collect::<Vec<_>>();
     assert!(names.contains(&"mcp_files_read"), "{names:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sqlite_store_runs_and_replays_a_session() {
+    let workspace = TempDir::new().unwrap();
+    let db_dir = TempDir::new().unwrap();
+    let store = Arc::new(SqliteSessionStore::new(db_dir.path().join("sessions.db")).unwrap());
+    let provider = Arc::new(ScriptedProvider::new(vec![final_answer("sqlite ok")]));
+    let config = ServerConfig {
+        provider_name: "scripted".to_owned(),
+        static_dir: None,
+        ..ServerConfig::default()
+    };
+    let state = AppState::new(store, provider as Arc<dyn ModelProvider>, config);
+    let app = build_router(state);
+
+    let (status, created) = request(
+        &app,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({"workspace": workspace.path().display().to_string(), "title": "sqlite"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let session_id = created["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let (status, sent) = request(
+        &app,
+        Method::POST,
+        &format!("/api/sessions/{session_id}/messages"),
+        Some(json!({"text": "hello sqlite"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{sent}");
+    let run_id = sent["run_id"].as_str().unwrap().to_owned();
+
+    for _ in 0..200 {
+        let (_, body) = request(
+            &app,
+            Method::GET,
+            &format!("/api/runs/{run_id}"),
+            None,
+            None,
+        )
+        .await;
+        if body["run"]["status"] == "completed" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    let (status, sessions) = request(&app, Method::GET, "/api/sessions", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{sessions}");
+    assert_eq!(sessions["sessions"].as_array().unwrap().len(), 1);
+
+    let mut replay = Value::Null;
+    for _ in 0..100 {
+        let (status, body) = request(
+            &app,
+            Method::GET,
+            &format!("/api/sessions/{session_id}/replay?run_id={run_id}"),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        replay = body;
+        if replay["matches_snapshot"] == true {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(replay["state"]["status"], "completed", "{replay}");
+    assert_eq!(replay["matches_snapshot"], true, "{replay}");
 }

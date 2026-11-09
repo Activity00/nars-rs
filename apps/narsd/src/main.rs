@@ -9,8 +9,8 @@ use std::sync::Arc;
 use nars_agent_runtime::ActorConfig;
 use nars_model::from_env;
 use nars_server::{AppState, ServerConfig, build_router};
-use nars_session::{FileExperienceStore, FileSessionStore};
-use nars_tools::mcp::{McpServerConfig, connect_stdio, parse_servers};
+use nars_session::{FileExperienceStore, FileSessionStore, SessionStore, SqliteSessionStore};
+use nars_tools::mcp::{McpServerConfig, connect, parse_servers};
 use nars_tools::policy::ApprovalMode;
 use tracing_subscriber::EnvFilter;
 
@@ -24,6 +24,7 @@ struct Args {
     workspace_root: Option<PathBuf>,
     token: Option<String>,
     mcp_config: Option<PathBuf>,
+    sqlite: Option<PathBuf>,
 }
 
 impl Default for Args {
@@ -37,6 +38,7 @@ impl Default for Args {
             workspace_root: None,
             token: std::env::var("NARS_AGENT_TOKEN").ok(),
             mcp_config: None,
+            sqlite: None,
         }
     }
 }
@@ -62,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut extra_tools = Vec::new();
     for mcp in load_mcp_configs(&args)? {
-        match connect_stdio(&mcp) {
+        match connect(&mcp) {
             Ok(tools) => {
                 tracing::info!(server = %mcp.name, tools = tools.len(), "connected MCP server");
                 extra_tools.extend(tools);
@@ -73,8 +75,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let store = Arc::new(FileSessionStore::new(&args.store)?);
-    let experience_root = args.store.parent().map_or_else(
+    let store: Arc<dyn SessionStore> = if let Some(path) = &args.sqlite {
+        Arc::new(SqliteSessionStore::new(path)?)
+    } else {
+        Arc::new(FileSessionStore::new(&args.store)?)
+    };
+    let experience_base = args.sqlite.as_ref().unwrap_or(&args.store);
+    let experience_root = experience_base.parent().map_or_else(
         || PathBuf::from(".nars-agent/experience"),
         |parent| parent.join("experience"),
     );
@@ -157,6 +164,11 @@ fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
                 ));
             }
             "--token" => args.token = Some(iter.next().ok_or("--token requires a value")?),
+            "--sqlite" => {
+                args.sqlite = Some(PathBuf::from(
+                    iter.next().ok_or("--sqlite requires a path")?,
+                ));
+            }
             "--mcp-config" => {
                 args.mcp_config = Some(PathBuf::from(
                     iter.next().ok_or("--mcp-config requires a path")?,
@@ -168,7 +180,8 @@ fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
                      USAGE:\n  narsd [OPTIONS]\n\n\
                      OPTIONS:\n\
                      \x20 --port <PORT>              HTTP port (default 8787)\n\
-                     \x20 --store <PATH>             session store (default .nars-agent/sessions)\n\
+                     \x20 --store <PATH>             session directory (default .nars-agent/sessions)\n\
+                     \x20 --sqlite <PATH>            use SQLite instead of directory storage\n\
                      \x20 --static <PATH>            web assets (default web/dist)\n\
                      \x20 --no-static                disable static file serving\n\
                      \x20 --approval <ask|auto|deny>  approval policy (default ask)\n\

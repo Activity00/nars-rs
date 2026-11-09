@@ -48,6 +48,9 @@ pub enum StoreError {
     /// Event log failure.
     #[error(transparent)]
     Log(#[from] LogError),
+    /// SQLite or worker failure.
+    #[error("session database error: {0}")]
+    Database(String),
 }
 
 /// Persistence interface, implemented by the file store and future SQLite store.
@@ -291,7 +294,7 @@ impl SessionStore for FileSessionStore {
     }
 }
 
-fn validate_id(id: &str) -> Result<(), StoreError> {
+pub(crate) fn validate_id(id: &str) -> Result<(), StoreError> {
     if id.is_empty()
         || id.len() > 128
         || !id.chars().all(|character| {

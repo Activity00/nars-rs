@@ -27,7 +27,7 @@ NARS 只能作为外挂，而不是决策内核。项目的核心假设是 **NAR
 3. **自研 `nars-agent-runtime`**：Session Actor、Agent IR、NARS 决策内核、事件循环。
 4. **Web API 使用 Rust + Axum，Web UI 使用 React + TypeScript。**
 5. **工具统一经过 Tool Broker**：策略、审批、沙箱、超时、输出截断。
-6. **事件日志是唯一事实来源**：JSONL + Snapshot（SQLite 适配器预留），UI 由事件流渲染。
+6. **事件日志是唯一事实来源**：JSONL 或 SQLite + Snapshot，UI 由事件流渲染。
 7. 只吸收外部项目的接口与实现经验：
    - `pi-rust`：Provider / Session / Tool / 事件流；
    - `AutoAgents`：Tool Schema、MCP；
@@ -76,7 +76,7 @@ Rust 层拥有最终解释权。
 | Web API | Axum 0.8 + Tokio |
 | Web UI | React 19 + TypeScript + Vite |
 | 工具协议 | 强类型 `ToolManifest` + JSON Schema |
-| 持久化 | 会话目录（JSONL Event Log + JSON Snapshot） |
+| 持久化 | 会话目录（JSONL）或 SQLite + Snapshot |
 | 状态 | 内存运行 + 周期 Snapshot |
 | 沙箱 | workspace canonical path 限制 + 保护路径 |
 | 测试基线 | 保留 `upstream/ona` 作为兼容性审计基线 |
