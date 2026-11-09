@@ -12,6 +12,15 @@ export interface GoalSpec {
   description: string;
 }
 
+export interface RunSummary {
+  run_id: string;
+  status: string;
+  goal: string;
+  step: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
 export interface TaskSpec {
   goal: GoalSpec;
   constraints: string[];
@@ -192,7 +201,7 @@ export interface ToolCallView {
 }
 
 export type TimelineItem =
-  | { kind: "user"; id: string; text: string; ts: number }
+  | { kind: "user"; id: string; text: string; runId?: string; ts: number }
   | { kind: "assistant"; id: string; text: string; runId: string; ts: number }
   | { kind: "decision"; id: string; runId: string; decision: NarsDecision; ts: number }
   | { kind: "tool"; id: string; runId: string; callId: string; ts: number }
@@ -211,6 +220,7 @@ export interface SelectedSessionState {
   timeline: TimelineItem[];
   runs: Record<string, RunView>;
   runOrder: string[];
+  summaries: RunSummary[];
   activeRunId?: string;
   lastSeq: number;
   connection: "connecting" | "live" | "error";

@@ -4,11 +4,13 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use http_body_util::BodyExt;
-use nars_agent_ir::{AgentIr, CandidateAction, FinalAnswer, GoalSpec, GoalType, TaskProposal};
+use nars_agent_ir::{
+    AgentEvent, AgentIr, CandidateAction, FinalAnswer, GoalSpec, GoalType, SessionId, TaskProposal,
+};
 use nars_agent_runtime::ActorConfig;
 use nars_model::{ModelProvider, ScriptedProvider};
 use nars_server::{AppState, ServerConfig, build_router};
-use nars_session::{FileSessionStore, SqliteSessionStore};
+use nars_session::{FileSessionStore, SessionStore, SqliteSessionStore};
 use nars_tools::policy::ApprovalMode;
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -448,4 +450,110 @@ async fn sqlite_store_runs_and_replays_a_session() {
     }
     assert_eq!(replay["state"]["status"], "completed", "{replay}");
     assert_eq!(replay["matches_snapshot"], true, "{replay}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_history_survives_a_restart() {
+    let workspace = TempDir::new().unwrap();
+    let store_dir = TempDir::new().unwrap();
+    let provider = Arc::new(ScriptedProvider::new(vec![
+        final_answer("persisted"),
+        final_answer("persisted again"),
+    ]));
+    let store = Arc::new(FileSessionStore::new(store_dir.path()).unwrap());
+    let config = ServerConfig {
+        provider_name: "scripted".to_owned(),
+        static_dir: None,
+        ..ServerConfig::default()
+    };
+    let app = build_router(AppState::new(
+        store.clone(),
+        provider as Arc<dyn ModelProvider>,
+        config.clone(),
+    ));
+    let (status, created) = request(
+        &app,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({"workspace": workspace.path().display().to_string(), "title": "history"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let session_id = created["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut run_ids = Vec::new();
+    for text in ["hello history", "second run"] {
+        let (status, sent) = request(
+            &app,
+            Method::POST,
+            &format!("/api/sessions/{session_id}/messages"),
+            Some(json!({"text": text})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{sent}");
+        let run_id = sent["run_id"].as_str().unwrap().to_owned();
+        for _ in 0..200 {
+            let (_, body) = request(
+                &app,
+                Method::GET,
+                &format!("/api/runs/{run_id}"),
+                None,
+                None,
+            )
+            .await;
+            if body["run"]["status"] == "completed" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        run_ids.push(run_id);
+    }
+    let first_run = run_ids[0].clone();
+
+    let events = store
+        .read_events(&SessionId::from_static(session_id.clone()))
+        .unwrap();
+    assert!(events.iter().any(|envelope| matches!(
+        &envelope.event,
+        AgentEvent::UserMessage { run_id: Some(id), .. } if id.as_str() == first_run
+    )));
+
+    drop(app);
+    let reopened = Arc::new(FileSessionStore::new(store_dir.path()).unwrap());
+    let app = build_router(AppState::new(
+        reopened,
+        Arc::new(ScriptedProvider::new(Vec::new())) as Arc<dyn ModelProvider>,
+        config,
+    ));
+    let (status, runs) = request(
+        &app,
+        Method::GET,
+        &format!("/api/sessions/{session_id}/runs"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{runs}");
+    let summaries = runs["runs"].as_array().unwrap();
+    assert_eq!(summaries.len(), 2, "{runs}");
+    assert_eq!(summaries[0]["run_id"], run_ids[1]);
+    assert_eq!(summaries[1]["run_id"], first_run);
+    assert_eq!(summaries[1]["status"], "completed");
+
+    let (status, projected) = request(
+        &app,
+        Method::GET,
+        &format!("/api/runs/{first_run}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{projected}");
+    assert_eq!(projected["live"], false);
+    assert_eq!(projected["run"]["status"], "completed");
+    assert_eq!(projected["run"]["run_id"], first_run);
 }

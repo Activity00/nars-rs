@@ -246,10 +246,13 @@ async fn get_run(
     Path(run_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let run_id = RunId::from_static(run_id);
-    let run = state
-        .run(&run_id)
-        .ok_or_else(|| ApiError::NotFound(format!("run `{run_id}` does not exist")))?;
-    Ok(Json(json!({"run": run.state()})))
+    if let Some(run) = state.run(&run_id) {
+        return Ok(Json(json!({"run": run.state(), "live": true})));
+    }
+    if let Some(projected) = state.persisted_run(&run_id)? {
+        return Ok(Json(json!({"run": projected, "live": false})));
+    }
+    Err(ApiError::NotFound(format!("run `{run_id}` does not exist")))
 }
 
 async fn list_runs(

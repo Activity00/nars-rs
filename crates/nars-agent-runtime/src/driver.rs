@@ -93,9 +93,24 @@ impl AgentRuntime {
     ///
     /// Returns an error when the NARS planner cannot be initialized.
     pub fn start(&self, session_id: SessionId, task: TaskSpec) -> Result<RunHandle, AgentError> {
+        self.start_with_run_id(session_id, task, RunId::new())
+    }
+
+    /// Starts one run with a caller-supplied identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the NARS planner cannot be initialized.
+    pub fn start_with_run_id(
+        &self,
+        session_id: SessionId,
+        task: TaskSpec,
+        run_id: RunId,
+    ) -> Result<RunHandle, AgentError> {
         let manifests = self.broker.manifests();
-        let (actor, initial) = SessionActor::new(
-            session_id.clone(),
+        let (actor, initial) = SessionActor::new_with_run_id(
+            run_id,
+            session_id,
             task,
             manifests,
             Arc::clone(&self.broker),

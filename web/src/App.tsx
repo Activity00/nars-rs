@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { api, eventStreamUrl, getToken, setToken } from "./api";
 import { initialState, reducer } from "./store";
-import type { SessionMeta, ToolManifest } from "./types";
+import type { RunSummary, SessionMeta, ToolManifest } from "./types";
 import { Composer } from "./components/Composer";
 import { Inspector } from "./components/Inspector";
 import { Sidebar } from "./components/Sidebar";
@@ -52,6 +52,27 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const detail = await api.session(selectedId);
+        if (!cancelled) {
+          dispatch({
+            type: "summaries",
+            summaries: detail.runs as RunSummary[],
+          });
+        }
+      } catch (error) {
+        if (!cancelled) dispatch({ type: "error", message: String(error) });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -117,9 +138,31 @@ export default function App() {
 
   const run = useMemo(() => {
     const selected = state.selected;
-    if (!selected) return undefined;
-    const id = selected.activeRunId ?? selected.runOrder[selected.runOrder.length - 1];
-    return id ? selected.runs[id] : undefined;
+    if (!selected?.activeRunId) return undefined;
+    return selected.runs[selected.activeRunId];
+  }, [state.selected]);
+
+  const runOptions = useMemo(() => {
+    const selected = state.selected;
+    if (!selected) return [];
+    const summaries = new Map(
+      selected.summaries.map((summary) => [summary.run_id, summary]),
+    );
+    return selected.runOrder.map((id) => {
+      const summary = summaries.get(id);
+      const view = selected.runs[id];
+      return {
+        id,
+        label: view?.task?.goal.description || summary?.goal || id,
+        status: view?.status ?? summary?.status ?? "unknown",
+      };
+    });
+  }, [state.selected]);
+
+  const visibleTimeline = useMemo(() => {
+    const timeline = state.selected?.timeline ?? [];
+    const active = state.selected?.activeRunId;
+    return active ? timeline.filter((item) => item.runId === active) : timeline;
   }, [state.selected]);
 
   const control = useCallback(
@@ -166,11 +209,37 @@ export default function App() {
             <div className="topbar-title">{session?.title ?? "nars-agent"}</div>
             <div className="mono small">{session?.workspace ?? "no workspace selected"}</div>
           </div>
-          {run && (
-            <span className={`pill pill-${statusTone(run.status)}`}>
-              {statusLabel(run.status)} · step {run.step}
-            </span>
-          )}
+          <div className="topbar-actions">
+            {runOptions.length > 0 && (
+              <label className="run-picker">
+                <span>Run</span>
+                <select
+                  value={state.selected?.activeRunId ?? "all"}
+                  onChange={(event) =>
+                    dispatch({
+                      type: "select-run",
+                      runId:
+                        event.target.value === "all"
+                          ? undefined
+                          : event.target.value,
+                    })
+                  }
+                >
+                  <option value="all">All runs</option>
+                  {runOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label.slice(0, 72)} · {statusLabel(option.status)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {run && (
+              <span className={`pill pill-${statusTone(run.status)}`}>
+                {statusLabel(run.status)} · step {run.step}
+              </span>
+            )}
+          </div>
         </header>
 
         {(state.provider === "demo" || state.provider === "echo") && (
@@ -195,7 +264,7 @@ export default function App() {
         )}
 
         <Timeline
-          timeline={state.selected?.timeline ?? []}
+          timeline={visibleTimeline}
           runs={state.selected?.runs ?? {}}
           busyCallId={busyCallId}
           onDecision={(callId, approved) => void decide(callId, approved)}

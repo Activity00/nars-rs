@@ -16,7 +16,8 @@ and test can be checked against a fixed, auditable reference.
 facts, priorities, historical tool outcomes, and the next-action decision. A model
 only produces a validated **Agent IR** proposal; a policy-checked tool broker
 performs real work. The model can never call a tool directly. Tools can be built-in, MCP stdio, or
-MCP Streamable HTTP. Sessions persist as JSONL or SQLite.
+MCP Streamable HTTP. Sessions persist as JSONL or SQLite. The web UI can switch
+between all runs or a single run, including runs restored after a restart.
 
 ```text
 user message → model (Agent IR) → Rust validation → NARS goals/facts

@@ -170,7 +170,22 @@ impl SessionActor {
         broker: Arc<ToolBroker>,
         config: ActorConfig,
     ) -> Result<(Self, ActorOutput), AgentError> {
-        let run_id = RunId::new();
+        Self::new_with_run_id(RunId::new(), session_id, task, manifests, broker, config)
+    }
+
+    /// Creates an actor with a caller-supplied run identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when NARS cannot be initialized.
+    pub fn new_with_run_id(
+        run_id: RunId,
+        session_id: SessionId,
+        task: TaskSpec,
+        manifests: Vec<ToolManifest>,
+        broker: Arc<ToolBroker>,
+        config: ActorConfig,
+    ) -> Result<(Self, ActorOutput), AgentError> {
         let run_key = run_id.short().to_owned();
         let tool_names = manifests
             .iter()

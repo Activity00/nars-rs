@@ -32,7 +32,7 @@ data: {"seq":42,"timestamp_ms":...,"event":{...}}
 | type | 关键字段 | 说明 |
 |---|---|---|
 | `session_created` | session_id, workspace | 会话创建 |
-| `user_message` | session_id, text | 用户输入 |
+| `user_message` | session_id, run_id, text | 用户输入；新事件绑定 run_id，便于按 Run 回看 |
 | `run_started` | run_id, session_id, task | Run 开始 |
 | `model_requested` | request_id, step, purpose | 调用模型 |
 | `model_proposed` | ir, usage | 模型返回合法 IR |

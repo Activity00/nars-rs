@@ -1,6 +1,7 @@
 import type {
   AppState,
   NarsDecision,
+  RunSummary,
   RunView,
   SelectedSessionState,
   SessionMeta,
@@ -13,6 +14,8 @@ import type {
 export type Action =
   | { type: "sessions"; sessions: SessionMeta[] }
   | { type: "select"; sessionId: string }
+  | { type: "summaries"; summaries: RunSummary[] }
+  | { type: "select-run"; runId?: string }
   | { type: "tools"; tools: ToolManifest[]; provider?: string; model?: string }
   | { type: "event"; envelope: WireEnvelope }
   | { type: "connection"; connection: SelectedSessionState["connection"] }
@@ -37,10 +40,36 @@ export function reducer(state: AppState, action: Action): AppState {
           timeline: [],
           runs: {},
           runOrder: [],
+          summaries: [],
           lastSeq: 0,
           connection: "connecting",
         },
       };
+    case "summaries": {
+      if (!state.selected) return state;
+      const summaries = action.summaries;
+      const ids = summaries.map((summary) => summary.run_id);
+      const runOrder = [
+        ...ids,
+        ...state.selected.runOrder.filter((id) => !ids.includes(id)),
+      ];
+      return {
+        ...state,
+        selected: {
+          ...state.selected,
+          summaries,
+          runOrder,
+          activeRunId: state.selected.activeRunId ?? ids[0],
+        },
+      };
+    }
+    case "select-run":
+      return state.selected
+        ? {
+            ...state,
+            selected: { ...state.selected, activeRunId: action.runId },
+          }
+        : state;
     case "tools":
       return {
         ...state,
@@ -98,7 +127,13 @@ export function applyEnvelope(state: AppState, envelope: WireEnvelope): AppState
 
   switch (event.type) {
     case "user_message":
-      push(next, { kind: "user", id, text: String(event.text ?? ""), ts });
+      push(next, {
+        kind: "user",
+        id,
+        text: String(event.text ?? ""),
+        runId,
+        ts,
+      });
       break;
     case "run_started":
       if (runId) {

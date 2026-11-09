@@ -1,3 +1,5 @@
+import type { RunSummary } from "./types";
+
 const TOKEN_KEY = "nars-agent-token";
 
 export function getToken(): string {
@@ -39,7 +41,7 @@ export interface SessionDetail {
     created_at_ms: number;
     updated_at_ms: number;
   };
-  runs: Array<{ run_id: string; status: string; goal: string; step: number }>;
+  runs: RunSummary[];
 }
 
 export const api = {

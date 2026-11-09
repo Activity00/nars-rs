@@ -178,12 +178,17 @@ snapshots(session_id, run_id, state_hash, last_seq, created_at_ms, snapshot_json
 `SessionStore` 是 trait，文件与 SQLite 实现可互换，运行时无感知。SQLite 适配器
 通过独立 worker 线程运行 `sqlx` 的 current-thread runtime，以保持同步 trait。
 
+Run 历史不依赖进程内状态：`summarize_runs` 从事件日志投影 `RunSummary`，
+`/api/sessions/{id}/runs` 合并实时与历史 Run；`/api/runs/{id}` 在进程重启后
+从事件日志投影 `RunState` 并返回 `live=false`。
+
 ## 8. Web UI
 
 三栏：
 
 1. 左：会话、workspace、工具目录、连接状态；
-2. 中：对话与执行时间线（NARS 决策、工具卡片、diff、审批、状态）；
+2. 中：Run 选择器 + 对话与执行时间线（NARS 决策、工具卡片、diff、审批、状态）；
+   可选择 `All runs` 或单个 Run，时间线按 Run 过滤；
 3. 右：当前目标、NARS goal atom、事实、候选评分、文件变化、token、控制按钮。
 
 UI 不直接访问文件系统，也不自行推断执行结果；所有内容来自 SSE 事件。
@@ -234,7 +239,7 @@ cargo run -p nars-eval -- --provider scripted
 | 2 真实模型 | ✅ OpenAI-compatible / Anthropic / Ollama / 重试 / 校验 |
 | 3 Tool Broker | ✅ 六个内置工具 / 沙箱 / 审批 / 超时 / 截断 |
 | 4 API + Web UI | ✅ Axum + SSE + React 三栏 |
-| 5 持久化与恢复 | ✅ JSONL / SQLite + Snapshot + 重放 + checkpoint resume |
+| 5 持久化与恢复 | ✅ JSONL / SQLite + Snapshot + 重放 + checkpoint resume + 重启后 Run 历史 |
 | 6 NARS 原生任务调度 | ✅ 线性阶段计划、前置条件、失败回退、软时间预算、workspace 经验复用 |
 | 7 MCP | ✅ stdio + Streamable HTTP、工具转换、外部权限；GET stream/续传待补 |
 | 8 评测与发布 | ✅ `nars-eval` runner、6 个固定任务、指标与报告、GitHub Actions 工作流；真实模型基准待补 |

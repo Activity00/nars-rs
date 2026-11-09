@@ -15,7 +15,7 @@ use nars_agent_runtime::{
 use nars_model::ModelProvider;
 use nars_session::{
     EventEnvelope, Experience, ExperienceStore, RunSummary, SessionMeta, SessionSnapshot,
-    SessionStore, StoreError,
+    SessionStore, StoreError, summarize_runs,
 };
 use nars_tools::policy::{ApprovalMode, Policy, PolicyConfig};
 use nars_tools::{BrokerConfig, Sandbox, Tool, ToolBroker};
@@ -197,11 +197,12 @@ impl AppState {
             workspace_text,
         ));
 
+        let run_id = RunId::new();
         let user_event = self.store.append(
             session_id,
             AgentEvent::UserMessage {
                 session_id: session_id.clone(),
-                run_id: None,
+                run_id: Some(run_id.clone()),
                 text: message.to_owned(),
             },
             now_ms(),
@@ -227,8 +228,8 @@ impl AppState {
                 retry: self.config.retry,
             },
         );
-        let handle = Arc::new(runtime.start(session_id.clone(), task)?);
-        let run_id = handle.run_id.clone();
+        let handle =
+            Arc::new(runtime.start_with_run_id(session_id.clone(), task, run_id.clone())?);
         self.runs.lock().unwrap().insert(run_id.clone(), handle);
         let title = message.lines().next().unwrap_or("agent run");
         self.store
@@ -304,27 +305,73 @@ impl AppState {
         self.runs.lock().unwrap().get(run_id).cloned()
     }
 
-    /// Summaries of runs started in this process for a session.
+    /// Summaries of live and historical runs for a session.
     #[must_use]
     pub fn runs_for_session(&self, session_id: &SessionId) -> Vec<RunSummary> {
-        let runs = self.runs.lock().unwrap();
-        let mut summaries = runs
-            .values()
-            .filter(|run| &run.session_id == session_id)
-            .map(|run| {
-                let state = run.state();
-                RunSummary {
-                    run_id: state.run_id.clone(),
-                    status: state.status.label().to_owned(),
-                    goal: state.task.goal.description.clone(),
-                    step: state.step,
-                    created_at_ms: state.created_at_ms,
-                    updated_at_ms: state.updated_at_ms,
+        let live = {
+            let runs = self.runs.lock().unwrap();
+            runs.values()
+                .filter(|run| &run.session_id == session_id)
+                .map(|run| {
+                    let state = run.state();
+                    RunSummary {
+                        run_id: state.run_id.clone(),
+                        status: state.status.label().to_owned(),
+                        goal: state.task.goal.description.clone(),
+                        step: state.step,
+                        created_at_ms: state.created_at_ms,
+                        updated_at_ms: state.updated_at_ms,
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut summaries = std::collections::BTreeMap::new();
+        match self.store.read_events(session_id) {
+            Ok(events) => {
+                for summary in summarize_runs(&events) {
+                    summaries.insert(summary.run_id.clone(), summary);
                 }
-            })
-            .collect::<Vec<_>>();
-        summaries.sort_by(|left, right| right.created_at_ms.cmp(&left.created_at_ms));
+            }
+            Err(error) => tracing::warn!(%error, "failed to read runs for session"),
+        }
+        for summary in live {
+            summaries.insert(summary.run_id.clone(), summary);
+        }
+        let mut summaries = summaries.into_values().collect::<Vec<_>>();
+        summaries.sort_by(|left, right| right.updated_at_ms.cmp(&left.updated_at_ms));
         summaries
+    }
+
+    /// Projects a historical run from the event log.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when sessions or events cannot be read.
+    pub fn persisted_run(&self, run_id: &RunId) -> Result<Option<RunState>, StoreError> {
+        for session in self.store.list_sessions()? {
+            let events = self.store.read_events(&session.session_id)?;
+            if !events
+                .iter()
+                .any(|envelope| envelope.event.run_id() == Some(run_id))
+            {
+                continue;
+            }
+            let filtered = events
+                .into_iter()
+                .filter(|envelope| match &envelope.event {
+                    AgentEvent::RunStarted {
+                        run_id: started, ..
+                    } => started == run_id,
+                    event => event.run_id() == Some(run_id),
+                })
+                .collect::<Vec<_>>();
+            if let Ok(state) = nars_agent_runtime::project(&filtered)
+                && &state.run_id == run_id
+            {
+                return Ok(Some(state));
+            }
+        }
+        Ok(None)
     }
 
     /// Finds the run that owns a pending tool call.

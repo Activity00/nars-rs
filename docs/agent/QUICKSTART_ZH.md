@@ -97,6 +97,8 @@ cargo run -p narsd     # narsd 自动服务 web/dist
 4. 右侧显示任务计划（investigate → change → verify）、NARS 评分与选择结果；
 5. 只读工具自动执行；`apply_patch` 会暂停并展示 diff；
 6. 点击 **Approve & run** 或 **Deny**；
+7. 顶部 **Run** 选择器可以切换 `All runs` 或单个 Run，时间线与 Inspector 会跟随过滤；
+   服务重启后历史 Run 仍可回看；
 7. 观察工具输出、NARS 事实、下一次决策；
 8. 可随时 **Pause / Resume / Cancel**。
 
@@ -213,6 +215,7 @@ curl -X POST http://127.0.0.1:8787/api/sessions/<session_id>/resume
 
 - `events.jsonl` 是事实来源；
 - `snapshot.json` 是 checkpoint，含 `state_hash`；
+- Run 列表与历史状态由事件日志投影，不依赖进程内存；
 - `../experience/<hash>.json` 保存同一 workspace 的工具成功率，供后续 Run 复用；
 - 也可以使用 SQLite：`cargo run -p narsd -- --sqlite .nars-agent/sessions.db`；
 - 服务重启后会话仍在；
