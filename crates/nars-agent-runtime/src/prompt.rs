@@ -44,6 +44,9 @@ pub fn system_prompt(manifests: &[ToolManifest]) -> String {
          - Propose 1 to 4 candidate actions with distinct tools or arguments and truthful confidence.\n\
          - When the task is complete, return a final_answer with a concise Markdown summary.\n\
          - If you are blocked by missing information, return a clarification.\n\
+         - A `conversation` array may carry earlier turns of the same session. Treat it as\n\
+           background: the current `task.user_message` is the instruction to execute now, and do\n\
+           not redo work an earlier turn already completed unless this message asks for it.\n\
          \n\
          AGENT IR JSON SCHEMA\n\
          {}\n\
@@ -149,7 +152,19 @@ fn render_state(state: &RunState, phase: &str, plan: Option<&TaskPlanView>) -> S
         }
     };
 
-    serde_json::to_string_pretty(&json!({
+    let conversation = state
+        .task
+        .history
+        .iter()
+        .map(|message| {
+            json!({
+                "role": message.role.label(),
+                "text": message.text
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut envelope = json!({
         "phase": phase,
         "task": {
             "goal": state.task.goal,
@@ -165,8 +180,11 @@ fn render_state(state: &RunState, phase: &str, plan: Option<&TaskPlanView>) -> S
         "observations": observations,
         "recent_decisions": decisions,
         "instruction": instruction
-    }))
-    .unwrap_or_else(|_| "{}".to_owned())
+    });
+    if !conversation.is_empty() {
+        envelope["conversation"] = json!(conversation);
+    }
+    serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
 
 fn excerpt(text: &str, limit: usize) -> String {
@@ -183,7 +201,10 @@ fn excerpt(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nars_agent_ir::{GoalSpec, GoalType, RunId, SessionId, SideEffect, TaskSpec, ToolManifest};
+    use nars_agent_ir::{
+        ChatMessage, ChatRole, GoalSpec, GoalType, RunId, SessionId, SideEffect, TaskSpec,
+        ToolManifest,
+    };
     use serde_json::json;
 
     fn manifest() -> ToolManifest {
@@ -220,5 +241,42 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&message.content).unwrap();
         assert_eq!(value["phase"], "plan");
         assert_eq!(value["task"]["workspace"], "/tmp/ws");
+        assert!(value.get("conversation").is_none());
+    }
+
+    #[test]
+    fn renders_earlier_turns_as_conversation_context() {
+        let mut task = TaskSpec::new(
+            GoalSpec::new(GoalType::ModifyCode, "continue"),
+            "/tmp/ws",
+            "now rename it",
+        );
+        task.history = vec![
+            ChatMessage {
+                role: ChatRole::User,
+                text: "inspect src/lib.rs".to_owned(),
+                run_id: Some(RunId::from_static("run_1")),
+                created_at_ms: 1,
+            },
+            ChatMessage {
+                role: ChatRole::Assistant,
+                text: "The file has one function.".to_owned(),
+                run_id: Some(RunId::from_static("run_1")),
+                created_at_ms: 2,
+            },
+        ];
+        let state = RunState::new(
+            RunId::from_static("run_2"),
+            SessionId::from_static("ses_1"),
+            task,
+            0,
+        );
+
+        let message = plan_message(&state, None);
+        let value: serde_json::Value = serde_json::from_str(&message.content).unwrap();
+        assert_eq!(value["conversation"][0]["role"], "user");
+        assert_eq!(value["conversation"][0]["text"], "inspect src/lib.rs");
+        assert_eq!(value["conversation"][1]["role"], "assistant");
+        assert_eq!(value["task"]["user_message"], "now rename it");
     }
 }

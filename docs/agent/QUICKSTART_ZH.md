@@ -152,6 +152,42 @@ HTTP MCP server：
 工具会以 `mcp_<server>_<tool>` 出现在 `/api/tools`、提示词和 Web UI 中。默认外部副作用 + 审批；
 连接失败只记录 warning，不影响 `narsd` 启动。详见 [ADR 0005](../decisions/0005-mcp.md)。
 
+## 5.6 非 Rust 项目验证
+
+非 Rust 项目使用 `run_command`，默认需要审批。可以在仓库中创建
+`.nars-agent/project.json`：
+
+```json
+{
+  "verify": {
+    "label": "unit tests",
+    "command": "npm test",
+    "timeout_ms": 120000
+  }
+}
+```
+
+也支持 `"verify": [{"command":"npm run lint"},{"command":"npm test"}]`。
+
+未配置时自动检测：
+
+- `package.json` 有 `scripts.test` → `npm test`
+- `pyproject.toml` / `pytest.ini` / `tests/` → `python3 -m pytest -q`
+- `go.mod` → `go test ./...`
+- `Makefile` 含 `test:` → `make test`
+- `gradlew` / `mvnw` / `Package.swift` / `mix.exs` 等
+
+Cargo 仓库默认继续使用 `cargo_check`/`cargo_test`。命令在 workspace 内执行，
+但 shell 本身不是 OS 沙箱，审批是主要安全边界。详见
+[ADR 0010](../decisions/0010-generic-verification.md)。
+
+## 5.7 跨 Run 上下文
+
+同一 Session 的后续消息会带上前 6 个已完成 Run 的问答摘要，因此可以直接说
+“现在把它改成 beta”。上下文有字符预算，且只取成功的 Run；
+历史写入 `RunStarted.task.history`，重启和分支后仍可重放。详见
+[ADR 0011](../decisions/0011-session-context.md)。
+
 ## 6. 审批策略
 
 ```bash

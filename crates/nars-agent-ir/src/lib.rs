@@ -26,7 +26,7 @@ pub use ir::{
     TaskProposal,
 };
 pub use narsese::{NarsTerm, atomize, keyed_atom, short_hash};
-pub use state::{ChatMessage, ChatRole, RunState, RunStatus, TaskSpec};
+pub use state::{ChatMessage, ChatRole, RunState, RunStatus, TaskSpec, VerificationCommand};
 pub use tool::{
     Artifact, DecisionSource, Diff, NarsDecision, NarsFact, NarsGoal, Observation, Outcome,
     PlanStageView, ScoredCandidate, SelectedAction, SideEffect, TaskPlanView, ToolCall,

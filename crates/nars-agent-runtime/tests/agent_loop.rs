@@ -576,3 +576,54 @@ async fn verification_failure_returns_to_change_and_switches_tool() {
          }\n"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn generic_run_command_verifies_a_non_rust_workspace() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("app.js"), "const value = 'alpha';\n").unwrap();
+    let (runtime, _scripted, _sink) = runtime(
+        &dir,
+        vec![
+            proposal("read_file", json!({"path": "app.js"}), 0.9),
+            proposal(
+                "apply_patch",
+                json!({"path": "app.js", "old_text": "alpha", "new_text": "beta"}),
+                0.95,
+            ),
+            proposal("run_command", json!({"command": "printf verified"}), 0.9),
+            final_answer(),
+        ],
+        ApprovalMode::AutoApprove,
+    );
+    let mut spec = task(&dir);
+    spec.goal.target = Some("app.js".to_owned());
+    spec.verification = vec![nars_agent_ir::VerificationCommand {
+        label: "syntax check".to_owned(),
+        command: "printf verified".to_owned(),
+        cwd: None,
+        timeout_ms: Some(5_000),
+    }];
+    let handle = runtime.start(SessionId::new(), spec).unwrap();
+    tokio::time::timeout(Duration::from_secs(15), handle.wait())
+        .await
+        .expect("run timed out");
+    let state = handle.state();
+    assert_eq!(state.status, RunStatus::Completed, "{:?}", state.error);
+    assert_eq!(state.tool_calls.len(), 3);
+    assert!(
+        state
+            .tool_calls
+            .iter()
+            .any(|call| call.tool == "run_command")
+    );
+    assert!(
+        state
+            .observations
+            .iter()
+            .any(|observation| observation.tool == "run_command")
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("app.js")).unwrap(),
+        "const value = 'beta';\n"
+    );
+}

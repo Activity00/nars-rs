@@ -7,9 +7,11 @@
 pub mod auth;
 pub mod compare;
 pub mod error;
+mod history;
 pub mod routes;
 pub mod sse;
 pub mod state;
+pub mod verify;
 
 pub use error::ApiError;
 pub use routes::build_router;

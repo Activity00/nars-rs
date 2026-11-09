@@ -4,6 +4,7 @@ pub(crate) mod apply_patch;
 mod cargo;
 mod list_files;
 mod read_file;
+mod run_command;
 mod search;
 
 use std::sync::Arc;
@@ -15,6 +16,7 @@ pub use apply_patch::ApplyPatchTool;
 pub use cargo::{CargoCheckTool, CargoTestTool};
 pub use list_files::ListFilesTool;
 pub use read_file::ReadFileTool;
+pub use run_command::RunCommandTool;
 pub use search::SearchTool;
 
 use crate::manifest::{Tool, ToolRegistry};
@@ -33,6 +35,7 @@ pub fn builtin_registry() -> ToolRegistry {
         Arc::new(ListFilesTool),
         Arc::new(SearchTool),
         Arc::new(ApplyPatchTool),
+        Arc::new(RunCommandTool),
         Arc::new(CargoCheckTool),
         Arc::new(CargoTestTool),
     ] {

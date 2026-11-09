@@ -115,6 +115,23 @@ impl ToolBroker {
     #[must_use]
     pub fn preview(&self, call: &ToolCall) -> Option<ToolPreview> {
         let manifest = self.registry.get(&call.tool)?.manifest().clone();
+        if manifest.name == "run_command" {
+            let command = call.arguments.get("command")?.as_str()?;
+            let cwd = call
+                .arguments
+                .get("cwd")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(".");
+            return Some(ToolPreview {
+                summary: format!("$ {command}"),
+                unified_diff: None,
+                files: if cwd == "." {
+                    Vec::new()
+                } else {
+                    vec![cwd.to_owned()]
+                },
+            });
+        }
         if manifest.name != "apply_patch" {
             return None;
         }

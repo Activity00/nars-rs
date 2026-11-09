@@ -21,7 +21,9 @@ between all runs or a single run, including runs restored after a restart. Sessi
 can be branched (with recorded lineage, a nested branch tree, and parent
 navigation), renamed, and deleted. Branch runs can be compared with their
 parent source run across status, tools, fallbacks, files, and final answer,
-with selectable runs on both sides.
+with selectable runs on both sides. Non-Rust projects verify through a
+policy-gated `run_command` and workspace verification discovery. Runs in the
+same session receive a bounded transcript of earlier completed turns.
 
 ```text
 user message → model (Agent IR) → Rust validation → NARS goals/facts
@@ -38,7 +40,9 @@ user message → model (Agent IR) → Rust validation → NARS goals/facts
   [0006](docs/decisions/0006-evaluation.md),
   [0007](docs/decisions/0007-session-branching.md),
   [0008](docs/decisions/0008-session-lifecycle.md),
-  [0009](docs/decisions/0009-run-comparison.md)
+  [0009](docs/decisions/0009-run-comparison.md),
+  [0010](docs/decisions/0010-generic-verification.md),
+  [0011](docs/decisions/0011-session-context.md)
 - Architecture overview: [docs/architecture/overview.md](docs/architecture/overview.md)
 - Event protocol: [docs/protocol/events.md](docs/protocol/events.md)
 - 中文快速开始: [docs/agent/QUICKSTART_ZH.md](docs/agent/QUICKSTART_ZH.md)

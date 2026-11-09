@@ -95,6 +95,7 @@ pub struct ToolResult {
 | `apply_patch` | WorkspaceWrite | 是 | 精确文本替换，原子写入，返回 unified diff |
 | `cargo_check` | ProcessExecution | 否 | `cargo check --message-format=short` |
 | `cargo_test` | ProcessExecution | 否 | `cargo test` |
+| `run_command` | ProcessExecution | 是 | 项目命令，如 `npm test` / `pytest` / `go test`；cwd 限定在 workspace |
 
 `apply_patch` 的输入支持两种形式：
 

@@ -79,6 +79,22 @@ impl<'a> From<&'a ChatMessage> for HashMessage<'a> {
     }
 }
 
+/// One project-specific verification command.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VerificationCommand {
+    /// Short label shown in the plan.
+    #[serde(default)]
+    pub label: String,
+    /// Shell command to run through `run_command`.
+    pub command: String,
+    /// Optional workspace-relative working directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// Optional per-command timeout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+}
+
 /// Declares what the user asked for and the limits of the run.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TaskSpec {
@@ -91,9 +107,21 @@ pub struct TaskSpec {
     pub workspace: String,
     /// Original user message.
     pub user_message: String,
+    /// Earlier turns of the same session, oldest first.
+    ///
+    /// The server projects this from the append-only event log when a run
+    /// starts, so it is persisted with `RunStarted` and replay stays
+    /// deterministic. The current message is not repeated here; it lives in
+    /// `user_message`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<ChatMessage>,
     /// Maximum agent steps.
     #[serde(default = "default_max_steps")]
     pub max_steps: u32,
+    /// Project-specific verification commands, discovered from the workspace
+    /// or `.nars-agent/project.json`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub verification: Vec<VerificationCommand>,
 }
 
 fn default_max_steps() -> u32 {
@@ -113,7 +141,9 @@ impl TaskSpec {
             constraints: Vec::new(),
             workspace: workspace.into(),
             user_message: user_message.into(),
+            history: Vec::new(),
             max_steps: default_max_steps(),
+            verification: Vec::new(),
         }
     }
 }
@@ -187,6 +217,18 @@ pub enum ChatRole {
     Assistant,
     /// Runtime information.
     System,
+}
+
+impl ChatRole {
+    /// A lowercase label for prompts and the UI.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Assistant => "assistant",
+            Self::System => "system",
+        }
+    }
 }
 
 /// One message in the session transcript.

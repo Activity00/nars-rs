@@ -162,7 +162,7 @@ impl TaskPlan {
                 stage(
                     StageKind::Verify,
                     "Verify the change",
-                    &["cargo_check", "cargo_test"],
+                    &["run_command", "cargo_check", "cargo_test"],
                     3,
                     step,
                 ),
@@ -172,7 +172,7 @@ impl TaskPlan {
                 stage(
                     StageKind::Verify,
                     "Run the requested checks",
-                    &["cargo_check", "cargo_test"],
+                    &["run_command", "cargo_check", "cargo_test"],
                     (max_steps / 2).max(2),
                     step,
                 ),
@@ -256,7 +256,7 @@ impl TaskPlan {
         }
         matches!(
             tool,
-            "read_file" | "list_files" | "search" | "git_diff" | "git_status"
+            "read_file" | "list_files" | "search" | "git_diff" | "git_status" | "run_command"
         )
     }
 
@@ -322,16 +322,33 @@ impl TaskPlan {
                 }
             }
             StageKind::Verify => {
-                candidates.push(
-                    CandidateAction::new("cargo_check")
-                        .with_arguments(json!({}))
-                        .with_confidence(0.84),
-                );
-                candidates.push(
-                    CandidateAction::new("cargo_test")
-                        .with_arguments(json!({}))
-                        .with_confidence(0.80),
-                );
+                if task.verification.is_empty() {
+                    candidates.push(
+                        CandidateAction::new("cargo_check")
+                            .with_arguments(json!({}))
+                            .with_confidence(0.84),
+                    );
+                    candidates.push(
+                        CandidateAction::new("cargo_test")
+                            .with_arguments(json!({}))
+                            .with_confidence(0.80),
+                    );
+                } else {
+                    for verification in &task.verification {
+                        let mut arguments = json!({"command": verification.command});
+                        if let Some(cwd) = &verification.cwd {
+                            arguments["cwd"] = json!(cwd);
+                        }
+                        if let Some(timeout_ms) = verification.timeout_ms {
+                            arguments["timeout_ms"] = json!(timeout_ms);
+                        }
+                        candidates.push(
+                            CandidateAction::new("run_command")
+                                .with_arguments(arguments)
+                                .with_confidence(0.88),
+                        );
+                    }
+                }
             }
             StageKind::Change | StageKind::Answer => {}
         }
@@ -509,14 +526,29 @@ impl TaskPlan {
         let hint = match stage.kind {
             StageKind::Investigate => {
                 "Inspect the workspace with read-only tools before changing anything."
+                    .to_owned()
             }
             StageKind::Change => {
                 "Propose an apply_patch action. old_text must be copied exactly from a file you have read."
+                    .to_owned()
             }
             StageKind::Verify => {
-                "Run cargo_check or cargo_test to verify the current workspace state."
+                if task.verification.is_empty() {
+                    "Run cargo_check or cargo_test to verify the current workspace state."
+                        .to_owned()
+                } else {
+                    let commands = task
+                        .verification
+                        .iter()
+                        .map(|verification| format!("`{}`", verification.command))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!(
+                        "Run the project verification with run_command: {commands}.                          Do not substitute cargo unless the project is Rust."
+                    )
+                }
             }
-            StageKind::Answer => "Return a final_answer summarizing the work.",
+            StageKind::Answer => "Return a final_answer summarizing the work.".to_owned(),
         };
         let files = if self.discovered_files.is_empty() {
             "none".to_owned()
@@ -647,7 +679,7 @@ fn first_word(input: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nars_agent_ir::{GoalSpec, ObservationId, RunId, ToolCallId};
+    use nars_agent_ir::{GoalSpec, ObservationId, RunId, ToolCallId, VerificationCommand};
 
     fn task(goal_type: GoalType) -> TaskSpec {
         TaskSpec::new(
@@ -678,6 +710,31 @@ mod tests {
         assert!(plan.allows("search"));
         assert!(!plan.allows("apply_patch"));
         assert!(!plan.allows("cargo_test"));
+    }
+
+    #[test]
+    fn configured_verification_uses_run_command() {
+        let mut task = task(GoalType::ModifyCode);
+        task.verification = vec![VerificationCommand {
+            label: "npm test".to_owned(),
+            command: "npm test".to_owned(),
+            cwd: None,
+            timeout_ms: Some(30_000),
+        }];
+        let mut plan = TaskPlan::for_task(&task, 0);
+        assert!(plan.allows("run_command"));
+        plan.record_observation("read_file", true, Some("src/app.ts"), 1);
+        plan.record_observation("apply_patch", true, None, 2);
+        assert_eq!(plan.active_stage().unwrap().kind, StageKind::Verify);
+        let candidates = plan.fallback_candidates(&task);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].tool, "run_command");
+        assert_eq!(candidates[0].arguments["command"], "npm test");
+        assert_eq!(candidates[0].arguments["timeout_ms"], 30_000);
+        assert!(plan.stage_guidance(&task).contains("project verification"));
+        let transition = plan.record_observation("run_command", true, None, 3);
+        assert!(transition.advanced);
+        assert_eq!(plan.active_stage().unwrap().kind, StageKind::Answer);
     }
 
     #[test]

@@ -179,7 +179,9 @@ impl AppState {
             constraints: Vec::new(),
             workspace: String::new(),
             user_message: message.to_owned(),
+            history: Vec::new(),
             max_steps: max_steps.unwrap_or(self.config.max_steps).clamp(1, 100),
+            verification: Vec::new(),
         };
         self.start_task(session_id, task)
     }
@@ -191,6 +193,12 @@ impl AppState {
             .ok_or_else(|| ApiError::NotFound(format!("session `{session_id}` does not exist")))?;
         let workspace = self.validate_workspace(&meta.workspace)?;
         task.workspace = workspace.display().to_string();
+        task.verification = crate::verify::detect(&workspace);
+        // Runs replay from their own events, so conversation context has to be
+        // projected from the durable log instead of live process state. The
+        // current user message is appended below and is therefore not part of
+        // the history.
+        task.history = crate::history::conversation_history(&self.store.read_events(session_id)?);
         let policy = Policy::new(PolicyConfig {
             mode: self.config.approval_mode,
             ..PolicyConfig::default()

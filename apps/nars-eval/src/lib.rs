@@ -398,7 +398,9 @@ pub async fn run_task(
         constraints: Vec::new(),
         workspace: workspace.path().display().to_string(),
         user_message: task.prompt.clone(),
+        history: Vec::new(),
         max_steps: task.limits.max_steps.unwrap_or(16).clamp(1, 100),
+        verification: Vec::new(),
     };
     let handle = runtime
         .start(SessionId::new(), task_spec)

@@ -112,7 +112,8 @@ modify_code: investigate → change → verify → answer
 阶段决定“哪些动作在原则上可以发生”，模型只提供具体候选与参数：
 
 - `apply_patch` 只在 `change` 阶段可用；
-- `cargo_check`/`cargo_test` 只在 `verify` 阶段可用；
+- `run_command` 可运行项目验证命令（`npm test`、`pytest`、`go test`），默认需要审批；
+- Cargo 项目默认仍用 `cargo_check`/`cargo_test`；非 Rust 项目使用项目配置或自动检测的命令；
 - `investigate` 只有成功的 `read_file` 才算完成，list/search 只算进展；
 - `verify` 失败会退回 `change`；
 - 计划未完成时的 `final_answer` 会被拒绝并重新请求。
@@ -189,6 +190,12 @@ Run 历史不依赖进程内状态：`summarize_runs` 从事件日志投影 `Run
 详见 [ADR 0007](../decisions/0007-session-branching.md)、
 [ADR 0008](../decisions/0008-session-lifecycle.md) 与
 [ADR 0009](../decisions/0009-run-comparison.md)。
+
+## 7.5 跨 Run 上下文
+
+每个 Run 启动时，服务端从事件日志投影最近 6 个已完成轮次，写入
+`TaskSpec.history`，随 `RunStarted` 持久化。后续消息因此能引用上一轮结果，
+同时保持重放和分支确定性。详见 [ADR 0011](../decisions/0011-session-context.md)。
 
 ## 8. Web UI
 

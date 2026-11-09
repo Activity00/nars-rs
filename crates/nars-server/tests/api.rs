@@ -911,3 +911,153 @@ async fn refuses_to_delete_a_parent_with_branches() {
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn detects_project_verification_for_non_rust_workspaces() {
+    let workspace = TempDir::new().unwrap();
+    std::fs::write(
+        workspace.path().join("package.json"),
+        r#"{"scripts":{"test":"vitest run"}}"#,
+    )
+    .unwrap();
+    let store_dir = TempDir::new().unwrap();
+    let store = Arc::new(FileSessionStore::new(store_dir.path()).unwrap());
+    let provider = Arc::new(ScriptedProvider::new(vec![final_answer("done")]));
+    let config = ServerConfig {
+        provider_name: "scripted".to_owned(),
+        static_dir: None,
+        ..ServerConfig::default()
+    };
+    let app = build_router(AppState::new(
+        store.clone(),
+        provider as Arc<dyn ModelProvider>,
+        config,
+    ));
+    let (_, created) = request(
+        &app,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({"workspace": workspace.path().display().to_string(), "title": "js"})),
+        None,
+    )
+    .await;
+    let session_id = created["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (status, sent) = request(
+        &app,
+        Method::POST,
+        &format!("/api/sessions/{session_id}/messages"),
+        Some(json!({"text": "Fix the JavaScript bug"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{sent}");
+    let run_id = sent["run_id"].as_str().unwrap().to_owned();
+    for _ in 0..200 {
+        let (_, body) = request(
+            &app,
+            Method::GET,
+            &format!("/api/runs/{run_id}"),
+            None,
+            None,
+        )
+        .await;
+        if body["run"]["status"] == "completed" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let events = store
+        .read_events(&SessionId::from_static(session_id))
+        .unwrap();
+    let verification = events
+        .iter()
+        .find_map(|envelope| match &envelope.event {
+            AgentEvent::RunStarted { task, .. } => Some(task.verification.clone()),
+            _ => None,
+        })
+        .expect("run started");
+    assert_eq!(verification.len(), 1, "{verification:?}");
+    assert_eq!(verification[0].command, "npm test");
+    assert_eq!(verification[0].label, "npm test");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn injects_earlier_completed_turns_into_the_next_run() {
+    let workspace = TempDir::new().unwrap();
+    let store_dir = TempDir::new().unwrap();
+    let store = Arc::new(FileSessionStore::new(store_dir.path()).unwrap());
+    let provider = Arc::new(ScriptedProvider::new(vec![
+        final_answer("first answer"),
+        final_answer("second answer"),
+    ]));
+    let config = ServerConfig {
+        provider_name: "scripted".to_owned(),
+        static_dir: None,
+        ..ServerConfig::default()
+    };
+    let app = build_router(AppState::new(
+        store.clone(),
+        provider as Arc<dyn ModelProvider>,
+        config,
+    ));
+    let (_, created) = request(
+        &app,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({"workspace": workspace.path().display().to_string(), "title": "context"})),
+        None,
+    )
+    .await;
+    let session_id = created["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut run_ids = Vec::new();
+    for text in ["first task", "second task"] {
+        let (status, sent) = request(
+            &app,
+            Method::POST,
+            &format!("/api/sessions/{session_id}/messages"),
+            Some(json!({"text": text})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{sent}");
+        let run_id = sent["run_id"].as_str().unwrap().to_owned();
+        for _ in 0..200 {
+            let (_, body) = request(
+                &app,
+                Method::GET,
+                &format!("/api/runs/{run_id}"),
+                None,
+                None,
+            )
+            .await;
+            if body["run"]["status"] == "completed" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        run_ids.push(run_id);
+    }
+    let events = store
+        .read_events(&SessionId::from_static(session_id))
+        .unwrap();
+    let history = events
+        .iter()
+        .find_map(|envelope| match &envelope.event {
+            AgentEvent::RunStarted { run_id, task, .. } if run_id.as_str() == run_ids[1] => {
+                Some(task.history.clone())
+            }
+            _ => None,
+        })
+        .expect("second RunStarted");
+    assert_eq!(history.len(), 2, "{history:?}");
+    assert_eq!(history[0].role, nars_agent_ir::ChatRole::User);
+    assert_eq!(history[0].text, "first task");
+    assert_eq!(history[1].role, nars_agent_ir::ChatRole::Assistant);
+    assert_eq!(history[1].text, "first answer");
+}
