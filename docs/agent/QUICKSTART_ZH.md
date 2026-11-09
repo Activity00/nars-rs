@@ -100,7 +100,8 @@ cargo run -p narsd     # narsd 自动服务 web/dist
 7. 顶部 **Run** 选择器可以切换 `All runs` 或单个 Run，时间线与 Inspector 会跟随过滤；
    服务重启后历史 Run 仍可回看；
 8. 在已完成的 Run 上点击 **Branch & retry**：复制此前 Run 到新会话、重写 run/session id，
-   并重新执行当前任务；原会话保持不变；
+   写入父会话 lineage，并重新执行当前任务；原会话保持不变；
+9. 侧栏分支会话显示 `↳`；选中会话可 **Rename** / **Delete**，删除当前会话后自动切换；
 7. 观察工具输出、NARS 事实、下一次决策；
 8. 可随时 **Pause / Resume / Cancel**。
 

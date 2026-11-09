@@ -14,6 +14,7 @@ import type {
 export type Action =
   | { type: "sessions"; sessions: SessionMeta[] }
   | { type: "select"; sessionId: string }
+  | { type: "clear" }
   | { type: "summaries"; summaries: RunSummary[] }
   | { type: "select-run"; runId?: string }
   | { type: "tools"; tools: ToolManifest[]; provider?: string; model?: string }
@@ -45,6 +46,8 @@ export function reducer(state: AppState, action: Action): AppState {
           connection: "connecting",
         },
       };
+    case "clear":
+      return { ...state, selected: undefined };
     case "summaries": {
       if (!state.selected) return state;
       const summaries = action.summaries;

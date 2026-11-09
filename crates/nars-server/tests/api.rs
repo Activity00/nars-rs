@@ -641,6 +641,8 @@ async fn branches_a_historical_run_into_a_new_session() {
     let branch_session = branch["session"]["session_id"].as_str().unwrap().to_owned();
     let branch_run = branch["run_id"].as_str().unwrap().to_owned();
     assert_ne!(branch_session, parent);
+    assert_eq!(branch["session"]["parent_session_id"], parent);
+    assert_eq!(branch["session"]["branched_from_run_id"], parent_runs[1]);
     assert!(branch["copied_events"].as_u64().unwrap() > 0, "{branch}");
 
     for _ in 0..200 {
@@ -705,4 +707,185 @@ async fn branches_a_historical_run_into_a_new_session() {
         &envelope.event,
         AgentEvent::RunStarted { run_id, .. } if run_id.as_str() == parent_runs[1]
     )));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn renames_and_deletes_a_session() {
+    let workspace = TempDir::new().unwrap();
+    let store_dir = TempDir::new().unwrap();
+    let store = Arc::new(FileSessionStore::new(store_dir.path()).unwrap());
+    let provider = Arc::new(ScriptedProvider::new(Vec::new()));
+    let config = ServerConfig {
+        provider_name: "scripted".to_owned(),
+        static_dir: None,
+        ..ServerConfig::default()
+    };
+    let app = build_router(AppState::new(
+        store,
+        provider as Arc<dyn ModelProvider>,
+        config,
+    ));
+    let (status, created) = request(
+        &app,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({"workspace": workspace.path().display().to_string(), "title": "old"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let session_id = created["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let (status, renamed) = request(
+        &app,
+        Method::PATCH,
+        &format!("/api/sessions/{session_id}"),
+        Some(json!({"title": "new title"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{renamed}");
+    assert_eq!(renamed["session"]["title"], "new title");
+
+    let (status, listed) = request(&app, Method::GET, "/api/sessions", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed["sessions"][0]["title"], "new title");
+
+    let (status, _) = request(
+        &app,
+        Method::DELETE,
+        &format!("/api/sessions/{session_id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, _) = request(
+        &app,
+        Method::GET,
+        &format!("/api/sessions/{session_id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, listed) = request(&app, Method::GET, "/api/sessions", None, None).await;
+    assert_eq!(listed["sessions"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn refuses_to_delete_a_parent_with_branches() {
+    let workspace = TempDir::new().unwrap();
+    let store_dir = TempDir::new().unwrap();
+    let config = ServerConfig {
+        provider_name: "scripted".to_owned(),
+        static_dir: None,
+        ..ServerConfig::default()
+    };
+    let store = Arc::new(FileSessionStore::new(store_dir.path()).unwrap());
+    let provider = Arc::new(ScriptedProvider::new(vec![
+        final_answer("done"),
+        final_answer("branch done"),
+    ]));
+    let app = build_router(AppState::new(
+        store,
+        provider as Arc<dyn ModelProvider>,
+        config,
+    ));
+    let (_, created) = request(
+        &app,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({"workspace": workspace.path().display().to_string(), "title": "parent"})),
+        None,
+    )
+    .await;
+    let parent = created["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (_, sent) = request(
+        &app,
+        Method::POST,
+        &format!("/api/sessions/{parent}/messages"),
+        Some(json!({"text": "task"})),
+        None,
+    )
+    .await;
+    let run_id = sent["run_id"].as_str().unwrap().to_owned();
+    for _ in 0..200 {
+        let (_, body) = request(
+            &app,
+            Method::GET,
+            &format!("/api/runs/{run_id}"),
+            None,
+            None,
+        )
+        .await;
+        if body["run"]["status"] == "completed" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let (status, branch) = request(
+        &app,
+        Method::POST,
+        &format!("/api/sessions/{parent}/branch"),
+        Some(json!({"run_id": run_id})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{branch}");
+    let branch_id = branch["session"]["session_id"].as_str().unwrap().to_owned();
+    let branch_run = branch["run_id"].as_str().unwrap().to_owned();
+    for _ in 0..200 {
+        let (_, body) = request(
+            &app,
+            Method::GET,
+            &format!("/api/runs/{branch_run}"),
+            None,
+            None,
+        )
+        .await;
+        if body["run"]["status"].is_string()
+            && ["completed", "failed", "cancelled"]
+                .contains(&body["run"]["status"].as_str().unwrap_or_default())
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    let (status, body) = request(
+        &app,
+        Method::DELETE,
+        &format!("/api/sessions/{parent}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+
+    let (status, _) = request(
+        &app,
+        Method::DELETE,
+        &format!("/api/sessions/{branch_id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = request(
+        &app,
+        Method::DELETE,
+        &format!("/api/sessions/{parent}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
 }

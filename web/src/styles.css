@@ -197,6 +197,34 @@ textarea:focus {
   background: var(--panel-2);
 }
 
+.session-actions {
+  display: flex;
+  gap: 10px;
+  padding: 2px 10px 8px;
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: var(--text);
+}
+
+.link-button.danger:hover {
+  color: var(--danger, #ff7b72);
+}
+
+.session-branch {
+  color: var(--accent);
+}
+
 .session-item.selected {
   background: var(--panel-3);
   border-color: var(--border);

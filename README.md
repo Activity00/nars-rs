@@ -17,7 +17,8 @@ facts, priorities, historical tool outcomes, and the next-action decision. A mod
 only produces a validated **Agent IR** proposal; a policy-checked tool broker
 performs real work. The model can never call a tool directly. Tools can be built-in, MCP stdio, or
 MCP Streamable HTTP. Sessions persist as JSONL or SQLite. The web UI can switch
-between all runs or a single run, including runs restored after a restart.
+between all runs or a single run, including runs restored after a restart. Sessions
+can be branched (with recorded lineage), renamed, and deleted.
 
 ```text
 user message → model (Agent IR) → Rust validation → NARS goals/facts
@@ -32,7 +33,8 @@ user message → model (Agent IR) → Rust validation → NARS goals/facts
   [0004](docs/decisions/0004-task-plan.md),
   [0005](docs/decisions/0005-mcp.md),
   [0006](docs/decisions/0006-evaluation.md),
-  [0007](docs/decisions/0007-session-branching.md)
+  [0007](docs/decisions/0007-session-branching.md),
+  [0008](docs/decisions/0008-session-lifecycle.md)
 - Architecture overview: [docs/architecture/overview.md](docs/architecture/overview.md)
 - Event protocol: [docs/protocol/events.md](docs/protocol/events.md)
 - 中文快速开始: [docs/agent/QUICKSTART_ZH.md](docs/agent/QUICKSTART_ZH.md)

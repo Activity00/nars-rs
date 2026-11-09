@@ -337,9 +337,13 @@ impl AppState {
             "Branch · {}",
             meta.title.chars().take(48).collect::<String>()
         );
-        let branch = self
-            .store
-            .create_session(&meta.workspace, &title, now_ms())?;
+        let branch = self.store.create_session_with_lineage(
+            &meta.workspace,
+            &title,
+            Some(session_id.clone()),
+            Some(source_run_id.clone()),
+            now_ms(),
+        )?;
         mapping.insert(session_id.to_string(), branch.session_id.to_string());
         let mut copied = 0;
         for envelope in prefix {
@@ -352,6 +356,40 @@ impl AppState {
         self.store
             .touch_session(&branch.session_id, now_ms(), Some(&title))?;
         Ok((branch, new_run_id, copied))
+    }
+
+    /// Deletes a session and its in-memory run handles.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session is missing or has a live run.
+    pub fn delete_session(&self, session_id: &SessionId) -> Result<(), ApiError> {
+        let has_live = {
+            let runs = self.runs.lock().unwrap();
+            runs.values()
+                .any(|run| &run.session_id == session_id && !run.state().status.is_terminal())
+        };
+        if has_live {
+            return Err(ApiError::Conflict(
+                "cannot delete a session with a live run".to_owned(),
+            ));
+        }
+        let has_children = self
+            .store
+            .list_sessions()?
+            .iter()
+            .any(|session| session.parent_session_id.as_ref() == Some(session_id));
+        if has_children {
+            return Err(ApiError::Conflict(
+                "delete branch sessions before deleting their parent".to_owned(),
+            ));
+        }
+        self.store.delete_session(session_id)?;
+        self.runs
+            .lock()
+            .unwrap()
+            .retain(|_, run| &run.session_id != session_id);
+        Ok(())
     }
 
     /// Resumes the latest durable checkpoint of a session.

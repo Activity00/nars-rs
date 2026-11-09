@@ -12,6 +12,8 @@ interface Props {
   token: string;
   onSelect: (id: string) => void;
   onCreate: (workspace: string) => void;
+  onRename: (session: SessionMeta) => void;
+  onDelete: (session: SessionMeta) => void;
   onSaveToken: (token: string) => void;
 }
 
@@ -25,6 +27,8 @@ export function Sidebar({
   token,
   onSelect,
   onCreate,
+  onRename,
+  onDelete,
   onSaveToken,
 }: Props) {
   const [workspace, setWorkspace] = useState("");
@@ -85,11 +89,34 @@ export function Sidebar({
                 className={`session-item ${selectedId === session.session_id ? "selected" : ""}`}
                 onClick={() => onSelect(session.session_id)}
               >
-                <span className="session-title">{session.title || "Untitled"}</span>
+                <span className="session-title">
+                  {session.parent_session_id && (
+                    <span className="session-branch" title="Branched session">
+                      ↳{" "}
+                    </span>
+                  )}
+                  {session.title || "Untitled"}
+                </span>
                 <span className="session-workspace mono small">
                   {basename(session.workspace)}
                 </span>
               </button>
+              {selectedId === session.session_id && (
+                <div className="session-actions">
+                  <button
+                    className="link-button"
+                    onClick={() => onRename(session)}
+                  >
+                    Rename
+                  </button>
+                  <button
+                    className="link-button danger"
+                    onClick={() => onDelete(session)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
             </li>
           ))}
         </ul>

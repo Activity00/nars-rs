@@ -2,7 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-11-09
-- 实现：`AppState::branch_session`、`POST /api/sessions/{id}/branch`、Inspector 的 **Branch & retry**
+- 实现：`AppState::branch_session`、`POST /api/sessions/{id}/branch`、Inspector 的 **Branch & retry**、`SessionMeta` lineage
 
 ## 背景
 
@@ -36,7 +36,8 @@ POST /api/sessions/{parent}/branch { "run_id": "run_..." }
 2. 找到 source run 的最早事件序号，得到前缀 prefix；
 3. 校验 source run 已终止（或进程内非 live）；
 4. 为 prefix 中每个旧 run_id 生成新 run_id；
-5. 创建新 session（同 workspace，标题 Branch · ...）；
+5. 创建新 session（同 workspace，标题 Branch · ...），写入
+   `parent_session_id` / `branched_from_run_id`；
 6. 将 prefix 事件复制到新 session：
    - 深度遍历 JSON，把旧 run_id 替换为新 run_id；
    - 把旧 session_id 替换为新 session_id；
@@ -66,7 +67,7 @@ Inspector 在 completed / failed / cancelled Run 上显示 **Branch & retry**：
 
 ## 限制
 
-- 没有正式的 `parent_session_id` / 分支树元数据，目前只通过标题和事件内容体现来源；
+- 没有分支树折叠/展开视图，侧栏只显示单层 `↳`；
 - 不支持从 Run 中间事件分支（例如某个工具观察之后）；
 - 前缀中的未完成 Run 会按原样复制；
 - 复制的前缀 Run 使用新 Run ID，外部书签里的旧 Run ID 不会指向分支副本；
@@ -74,7 +75,6 @@ Inspector 在 completed / failed / cancelled Run 上显示 **Branch & retry**：
 
 ## 后续
 
-- `SessionMeta.parent_session_id` 与 `branched_from_run_id`；
 - 分支树 / 对比视图；
 - 从任意事件位置 fork 并注入新的用户指令；
 - 分支级 experience 隔离与对比评测。

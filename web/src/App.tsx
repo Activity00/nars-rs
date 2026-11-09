@@ -99,6 +99,40 @@ export default function App() {
     [selectedId],
   );
 
+  const renameSession = useCallback(
+    async (target: SessionMeta) => {
+      const title = window.prompt("Session title", target.title);
+      if (!title?.trim()) return;
+      try {
+        await api.renameSession(target.session_id, title.trim());
+        await refreshSessions();
+      } catch (error) {
+        dispatch({ type: "error", message: String(error) });
+      }
+    },
+    [refreshSessions],
+  );
+
+  const deleteSession = useCallback(
+    async (target: SessionMeta) => {
+      if (!window.confirm(`Delete "${target.title}" and all of its runs?`)) return;
+      try {
+        await api.deleteSession(target.session_id);
+        const sessions = await refreshSessions();
+        if (target.session_id === selectedId) {
+          if (sessions.length > 0) {
+            dispatch({ type: "select", sessionId: sessions[0].session_id });
+          } else {
+            dispatch({ type: "clear" });
+          }
+        }
+      } catch (error) {
+        dispatch({ type: "error", message: String(error) });
+      }
+    },
+    [refreshSessions, selectedId],
+  );
+
   const createSession = useCallback(
     async (workspace: string) => {
       try {
@@ -210,6 +244,8 @@ export default function App() {
         token={token}
         onSelect={selectSession}
         onCreate={(workspace) => void createSession(workspace)}
+        onRename={(session) => void renameSession(session)}
+        onDelete={(session) => void deleteSession(session)}
         onSaveToken={(value) => {
           setToken(value);
           setTokenValue(value);

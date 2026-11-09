@@ -28,7 +28,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/sessions",
             post(create_session_handler).get(list_sessions),
         )
-        .route("/api/sessions/{id}", get(get_session))
+        .route(
+            "/api/sessions/{id}",
+            get(get_session)
+                .patch(rename_session)
+                .delete(delete_session),
+        )
         .route("/api/sessions/{id}/messages", post(send_message))
         .route("/api/sessions/{id}/branch", post(branch_session))
         .route("/api/sessions/{id}/runs", get(list_runs))
@@ -184,6 +189,45 @@ async fn get_session(
         .ok_or_else(|| ApiError::NotFound(format!("session `{session_id}` does not exist")))?;
     let runs = state.runs_for_session(&session_id);
     Ok(Json(json!({"session": meta, "runs": runs})))
+}
+
+#[derive(Debug, Deserialize)]
+struct RenameSessionRequest {
+    title: String,
+}
+
+async fn rename_session(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+    Json(body): Json<RenameSessionRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let title = body.title.trim();
+    if title.is_empty() {
+        return Err(ApiError::BadRequest("title must not be empty".to_owned()));
+    }
+    let session_id = SessionId::from_static(session_id);
+    if state.store.get_session(&session_id)?.is_none() {
+        return Err(ApiError::NotFound(format!(
+            "session `{session_id}` does not exist"
+        )));
+    }
+    state
+        .store
+        .touch_session(&session_id, now_ms(), Some(title))?;
+    let meta = state
+        .store
+        .get_session(&session_id)?
+        .ok_or_else(|| ApiError::NotFound(format!("session `{session_id}` does not exist")))?;
+    Ok(Json(json!({"session": meta})))
+}
+
+async fn delete_session(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let session_id = SessionId::from_static(session_id);
+    state.delete_session(&session_id)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Debug, Deserialize)]

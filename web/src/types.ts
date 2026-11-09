@@ -4,6 +4,8 @@ export interface SessionMeta {
   title: string;
   created_at_ms: number;
   updated_at_ms: number;
+  parent_session_id?: string | null;
+  branched_from_run_id?: string | null;
 }
 
 export interface GoalSpec {

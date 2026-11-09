@@ -52,6 +52,13 @@ export const api = {
   tools: () => request<{ tools: unknown[] }>("/api/tools"),
   sessions: () => request<{ sessions: any[] }>("/api/sessions"),
   session: (id: string) => request<SessionDetail>(`/api/sessions/${id}`),
+  renameSession: (id: string, title: string) =>
+    request<{ session: any }>(`/api/sessions/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
+  deleteSession: (id: string) =>
+    request<void>(`/api/sessions/${id}`, { method: "DELETE" }),
   createSession: (workspace: string, title?: string) =>
     request<{ session: any }>("/api/sessions", {
       method: "POST",

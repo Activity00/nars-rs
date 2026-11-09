@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use nars_agent_ir::{AgentEvent, SessionId};
+use nars_agent_ir::{AgentEvent, RunId, SessionId};
 use thiserror::Error;
 
 use crate::event_log::{EventEnvelope, EventLog, LogError};
@@ -65,7 +65,29 @@ pub trait SessionStore: Send + Sync {
         workspace: &str,
         title: &str,
         now_ms: i64,
+    ) -> Result<SessionMeta, StoreError> {
+        self.create_session_with_lineage(workspace, title, None, None, now_ms)
+    }
+    /// Creates a new session, optionally recording branch lineage.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid identifiers or filesystem failures.
+    fn create_session_with_lineage(
+        &self,
+        workspace: &str,
+        title: &str,
+        parent_session_id: Option<SessionId>,
+        branched_from_run_id: Option<RunId>,
+        now_ms: i64,
     ) -> Result<SessionMeta, StoreError>;
+    /// Deletes a session and all of its events and snapshots.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid identifiers, missing sessions, or
+    /// filesystem failures.
+    fn delete_session(&self, session_id: &SessionId) -> Result<(), StoreError>;
     /// Lists sessions sorted by most recently updated.
     ///
     /// # Errors
@@ -170,10 +192,12 @@ impl FileSessionStore {
 }
 
 impl SessionStore for FileSessionStore {
-    fn create_session(
+    fn create_session_with_lineage(
         &self,
         workspace: &str,
         title: &str,
+        parent_session_id: Option<SessionId>,
+        branched_from_run_id: Option<RunId>,
         now_ms: i64,
     ) -> Result<SessionMeta, StoreError> {
         let session_id = SessionId::new();
@@ -188,9 +212,24 @@ impl SessionStore for FileSessionStore {
             title: title.to_owned(),
             created_at_ms: now_ms,
             updated_at_ms: now_ms,
+            parent_session_id,
+            branched_from_run_id,
         };
         write_json(&dir.join("meta.json"), &meta)?;
         Ok(meta)
+    }
+
+    fn delete_session(&self, session_id: &SessionId) -> Result<(), StoreError> {
+        let dir = self.session_dir(session_id)?;
+        if !dir.exists() {
+            return Err(StoreError::NotFound(session_id.to_string()));
+        }
+        self.logs.lock().unwrap().remove(session_id);
+        std::fs::remove_dir_all(&dir).map_err(|source| StoreError::Io {
+            path: dir.display().to_string(),
+            source,
+        })?;
+        Ok(())
     }
 
     fn list_sessions(&self) -> Result<Vec<SessionMeta>, StoreError> {
@@ -405,6 +444,39 @@ mod tests {
         assert!(matches!(
             store.read_events(&id),
             Err(StoreError::InvalidId(_))
+        ));
+    }
+}
+
+#[cfg(test)]
+mod lineage_tests {
+    use super::*;
+    use nars_agent_ir::RunId;
+
+    #[test]
+    fn file_store_records_lineage_and_deletes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileSessionStore::new(dir.path()).unwrap();
+        let parent = store.create_session("/tmp/ws", "parent", 10).unwrap();
+        let source = RunId::from_static("run_source");
+        let branch = store
+            .create_session_with_lineage(
+                "/tmp/ws",
+                "branch",
+                Some(parent.session_id.clone()),
+                Some(source.clone()),
+                11,
+            )
+            .unwrap();
+        let meta = store.get_session(&branch.session_id).unwrap().unwrap();
+        assert_eq!(meta.parent_session_id, Some(parent.session_id.clone()));
+        assert_eq!(meta.branched_from_run_id, Some(source));
+        store.delete_session(&branch.session_id).unwrap();
+        assert!(store.get_session(&branch.session_id).unwrap().is_none());
+        assert_eq!(store.list_sessions().unwrap().len(), 1);
+        assert!(matches!(
+            store.delete_session(&branch.session_id),
+            Err(StoreError::NotFound(_))
         ));
     }
 }

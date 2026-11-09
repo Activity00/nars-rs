@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 
-use nars_agent_ir::{AgentEvent, SessionId};
+use nars_agent_ir::{AgentEvent, RunId, SessionId};
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
@@ -39,8 +39,14 @@ enum Job {
     CreateSession {
         workspace: String,
         title: String,
+        parent_session_id: Option<SessionId>,
+        branched_from_run_id: Option<RunId>,
         now_ms: i64,
         reply: Sender<Result<SessionMeta, StoreError>>,
+    },
+    DeleteSession {
+        session_id: SessionId,
+        reply: Sender<Result<(), StoreError>>,
     },
     ListSessions {
         reply: Sender<Result<Vec<SessionMeta>, StoreError>>,
@@ -156,16 +162,28 @@ impl Drop for SqliteSessionStore {
 }
 
 impl SessionStore for SqliteSessionStore {
-    fn create_session(
+    fn create_session_with_lineage(
         &self,
         workspace: &str,
         title: &str,
+        parent_session_id: Option<SessionId>,
+        branched_from_run_id: Option<RunId>,
         now_ms: i64,
     ) -> Result<SessionMeta, StoreError> {
         self.request(|reply| Job::CreateSession {
             workspace: workspace.to_owned(),
             title: title.to_owned(),
+            parent_session_id,
+            branched_from_run_id,
             now_ms,
+            reply,
+        })
+    }
+
+    fn delete_session(&self, session_id: &SessionId) -> Result<(), StoreError> {
+        validate_id(session_id.as_str())?;
+        self.request(|reply| Job::DeleteSession {
+            session_id: session_id.clone(),
             reply,
         })
     }
@@ -284,12 +302,34 @@ async fn open_pool(path: &Path) -> Result<SqlitePool, StoreError> {
             workspace TEXT NOT NULL,
             title TEXT NOT NULL,
             created_at_ms INTEGER NOT NULL,
-            updated_at_ms INTEGER NOT NULL
+            updated_at_ms INTEGER NOT NULL,
+            parent_session_id TEXT,
+            branched_from_run_id TEXT
         )",
     )
     .execute(&pool)
     .await
     .map_err(|error| StoreError::Database(error.to_string()))?;
+    let columns = sqlx::query("PRAGMA table_info(sessions)")
+        .fetch_all(&pool)
+        .await
+        .map_err(|error| StoreError::Database(error.to_string()))?;
+    let names = columns
+        .iter()
+        .filter_map(|row| row.try_get::<String, _>("name").ok())
+        .collect::<std::collections::BTreeSet<_>>();
+    if !names.contains("parent_session_id") {
+        sqlx::query("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT")
+            .execute(&pool)
+            .await
+            .map_err(|error| StoreError::Database(error.to_string()))?;
+    }
+    if !names.contains("branched_from_run_id") {
+        sqlx::query("ALTER TABLE sessions ADD COLUMN branched_from_run_id TEXT")
+            .execute(&pool)
+            .await
+            .map_err(|error| StoreError::Database(error.to_string()))?;
+    }
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS events (
             session_id TEXT NOT NULL,
@@ -323,10 +363,25 @@ async fn handle_job(pool: &SqlitePool, job: Job) {
         Job::CreateSession {
             workspace,
             title,
+            parent_session_id,
+            branched_from_run_id,
             now_ms,
             reply,
         } => {
-            let _ = reply.send(create_session(pool, &workspace, &title, now_ms).await);
+            let _ = reply.send(
+                create_session(
+                    pool,
+                    &workspace,
+                    &title,
+                    parent_session_id,
+                    branched_from_run_id,
+                    now_ms,
+                )
+                .await,
+            );
+        }
+        Job::DeleteSession { session_id, reply } => {
+            let _ = reply.send(delete_session(pool, &session_id).await);
         }
         Job::ListSessions { reply } => {
             let _ = reply.send(list_sessions(pool).await);
@@ -366,6 +421,8 @@ async fn create_session(
     pool: &SqlitePool,
     workspace: &str,
     title: &str,
+    parent_session_id: Option<SessionId>,
+    branched_from_run_id: Option<RunId>,
     now_ms: i64,
 ) -> Result<SessionMeta, StoreError> {
     let meta = SessionMeta {
@@ -374,25 +431,62 @@ async fn create_session(
         title: title.to_owned(),
         created_at_ms: now_ms,
         updated_at_ms: now_ms,
+        parent_session_id,
+        branched_from_run_id,
     };
     sqlx::query(
-        "INSERT INTO sessions (session_id, workspace, title, created_at_ms, updated_at_ms)
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO sessions
+            (session_id, workspace, title, created_at_ms, updated_at_ms,
+             parent_session_id, branched_from_run_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(meta.session_id.as_str())
     .bind(&meta.workspace)
     .bind(&meta.title)
     .bind(meta.created_at_ms)
     .bind(meta.updated_at_ms)
+    .bind(meta.parent_session_id.as_ref().map(SessionId::as_str))
+    .bind(meta.branched_from_run_id.as_ref().map(RunId::as_str))
     .execute(pool)
     .await
     .map_err(|error| StoreError::Database(error.to_string()))?;
     Ok(meta)
 }
 
+async fn delete_session(pool: &SqlitePool, session_id: &SessionId) -> Result<(), StoreError> {
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(|error| StoreError::Database(error.to_string()))?;
+    sqlx::query("DELETE FROM events WHERE session_id = ?")
+        .bind(session_id.as_str())
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| StoreError::Database(error.to_string()))?;
+    sqlx::query("DELETE FROM snapshots WHERE session_id = ?")
+        .bind(session_id.as_str())
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| StoreError::Database(error.to_string()))?;
+    let result = sqlx::query("DELETE FROM sessions WHERE session_id = ?")
+        .bind(session_id.as_str())
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| StoreError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|error| StoreError::Database(error.to_string()))?;
+    if result.rows_affected() == 0 {
+        return Err(StoreError::NotFound(session_id.to_string()));
+    }
+    Ok(())
+}
+
 async fn list_sessions(pool: &SqlitePool) -> Result<Vec<SessionMeta>, StoreError> {
     let rows = sqlx::query(
-        "SELECT session_id, workspace, title, created_at_ms, updated_at_ms
+        "SELECT session_id, workspace, title, created_at_ms, updated_at_ms,
+                parent_session_id, branched_from_run_id
          FROM sessions ORDER BY updated_at_ms DESC",
     )
     .fetch_all(pool)
@@ -406,7 +500,8 @@ async fn get_session(
     session_id: &SessionId,
 ) -> Result<Option<SessionMeta>, StoreError> {
     let row = sqlx::query(
-        "SELECT session_id, workspace, title, created_at_ms, updated_at_ms
+        "SELECT session_id, workspace, title, created_at_ms, updated_at_ms,
+                parent_session_id, branched_from_run_id
          FROM sessions WHERE session_id = ?",
     )
     .bind(session_id.as_str())
@@ -434,6 +529,14 @@ fn row_to_meta(row: &SqliteRow) -> Result<SessionMeta, StoreError> {
         updated_at_ms: row
             .try_get("updated_at_ms")
             .map_err(|error| StoreError::Database(error.to_string()))?,
+        parent_session_id: row
+            .try_get::<Option<String>, _>("parent_session_id")
+            .map_err(|error| StoreError::Database(error.to_string()))?
+            .map(SessionId::from_static),
+        branched_from_run_id: row
+            .try_get::<Option<String>, _>("branched_from_run_id")
+            .map_err(|error| StoreError::Database(error.to_string()))?
+            .map(RunId::from_static),
     })
 }
 
@@ -673,5 +776,34 @@ mod tests {
             store.read_events(&id),
             Err(StoreError::InvalidId(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod lineage_tests {
+    use super::*;
+    use nars_agent_ir::RunId;
+
+    #[test]
+    fn sqlite_store_records_lineage_and_deletes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteSessionStore::new(dir.path().join("lineage.db")).unwrap();
+        let parent = store.create_session("/tmp/ws", "parent", 10).unwrap();
+        let source = RunId::from_static("run_source");
+        let branch = store
+            .create_session_with_lineage(
+                "/tmp/ws",
+                "branch",
+                Some(parent.session_id.clone()),
+                Some(source.clone()),
+                11,
+            )
+            .unwrap();
+        let meta = store.get_session(&branch.session_id).unwrap().unwrap();
+        assert_eq!(meta.parent_session_id, Some(parent.session_id));
+        assert_eq!(meta.branched_from_run_id, Some(source));
+        store.delete_session(&branch.session_id).unwrap();
+        assert!(store.get_session(&branch.session_id).unwrap().is_none());
+        assert_eq!(store.list_sessions().unwrap().len(), 1);
     }
 }

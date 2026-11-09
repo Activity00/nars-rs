@@ -16,6 +16,12 @@ pub struct SessionMeta {
     pub created_at_ms: i64,
     /// Last update timestamp.
     pub updated_at_ms: i64,
+    /// Parent session when this session is a branch.
+    #[serde(default)]
+    pub parent_session_id: Option<SessionId>,
+    /// Source run that was retried when this session is a branch.
+    #[serde(default)]
+    pub branched_from_run_id: Option<RunId>,
 }
 
 /// A recoverable checkpoint of one run.
