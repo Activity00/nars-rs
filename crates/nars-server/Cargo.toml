@@ -11,6 +11,7 @@ description = "HTTP and SSE API for nars-agent"
 workspace = true
 
 [dependencies]
+nars-core = { workspace = true }
 nars-agent-ir = { workspace = true }
 nars-agent-runtime = { workspace = true }
 nars-model = { workspace = true }

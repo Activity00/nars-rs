@@ -880,6 +880,10 @@ dependencies = [
 [[package]]
 name = "nars-core"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "nars-eval"
@@ -922,6 +926,7 @@ dependencies = [
  "http-body-util",
  "nars-agent-ir",
  "nars-agent-runtime",
+ "nars-core",
  "nars-model",
  "nars-session",
  "nars-tools",
@@ -940,6 +945,7 @@ name = "nars-session"
 version = "0.1.0"
 dependencies = [
  "nars-agent-ir",
+ "nars-core",
  "serde",
  "serde_json",
  "sqlx",

@@ -9,6 +9,7 @@ use crate::config::{
     OPERATIONS_MAX, UNIFICATION_DEPTH,
 };
 use crate::inference::revision_and_choice;
+use crate::memory_snapshot::{MemorySnapshot, MemorySnapshotError};
 use crate::{
     Concept, ConceptId, Event, EventType, Implication, InvertedAtomIndex, Narsese,
     OccurrenceTimeIndex, PriorityQueue, Stamp, Substitution, Term, Truth,
@@ -132,6 +133,102 @@ impl Memory {
 
     pub fn concepts(&self) -> impl Iterator<Item = &Concept> {
         self.concepts.iter().filter_map(Option::as_ref)
+    }
+
+    /// Captures durable knowledge as a serializable snapshot.
+    ///
+    /// Transient state (event queues, occurrence and atom indexes) is not
+    /// stored; it is rebuilt from the concepts when the snapshot is loaded.
+    #[must_use]
+    pub fn to_snapshot(&self, language: &Narsese) -> MemorySnapshot {
+        crate::memory_snapshot::snapshot_of(self, language)
+    }
+
+    /// Rebuilds memory from a snapshot, recomputing derived indexes.
+    ///
+    /// The atom table stored in the snapshot is rebuilt internally, so the
+    /// restored terms keep their meaning even in a fresh process.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the snapshot version is unknown, the atom table is
+    /// invalid, or two concepts claim the same term.
+    pub fn from_snapshot(snapshot: &MemorySnapshot) -> Result<Self, MemorySnapshotError> {
+        crate::memory_snapshot::restore_memory(snapshot)
+    }
+
+    /// Highest evidence identifier present in stored events and implications.
+    ///
+    /// A restored runtime must continue numbering from here; otherwise new
+    /// evidence reuses old ids and revision silently treats it as already
+    /// counted.
+    #[must_use]
+    pub fn max_evidence_id(&self) -> u64 {
+        let mut max = 0;
+        for concept in self.concepts() {
+            for event in [
+                &concept.belief,
+                &concept.belief_spike,
+                &concept.predicted_belief,
+                &concept.goal_spike,
+            ] {
+                max = max.max(event.stamp.iter().max().unwrap_or(0));
+            }
+            for table in &concept.precondition_beliefs {
+                for implication in table.iter() {
+                    max = max.max(implication.stamp.iter().max().unwrap_or(0));
+                }
+            }
+            for implication in concept.implication_links.iter() {
+                max = max.max(implication.stamp.iter().max().unwrap_or(0));
+            }
+        }
+        max
+    }
+
+    pub(crate) const fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    pub(crate) const fn next_concept_id(&self) -> u64 {
+        self.next_concept_id
+    }
+
+    /// Creates an empty memory with a restored identifier counter.
+    pub(crate) fn restore_base(capacity: usize, next_concept_id: u64) -> Self {
+        let mut memory = Self::new(capacity);
+        memory.next_concept_id = next_concept_id;
+        memory
+    }
+
+    pub(crate) fn set_declarative_implications(&mut self, value: bool) {
+        self.has_declarative_implications = value;
+    }
+
+    pub(crate) fn set_concept_id_lists(
+        &mut self,
+        declarative: Vec<ConceptId>,
+        generic_input_procedural: Vec<ConceptId>,
+        variable_procedural: Vec<ConceptId>,
+    ) {
+        self.declarative_concept_ids = declarative;
+        self.generic_input_procedural_concept_ids = generic_input_procedural;
+        self.variable_procedural_concept_ids = variable_procedural;
+    }
+
+    /// Inserts a restored concept without inference bookkeeping.
+    ///
+    /// Returns `false` when the term or identifier is already present.
+    pub(crate) fn insert_restored(&mut self, language: &Narsese, concept: Concept) -> bool {
+        if self.term_slots.contains_key(&concept.term) || self.id_slots.contains_key(&concept.id) {
+            return false;
+        }
+        let slot = self.concepts.len();
+        self.term_slots.insert(concept.term, slot);
+        self.id_slots.insert(concept.id, slot);
+        self.inverted_index.add(language, &concept.term, concept.id);
+        self.concepts.push(Some(concept));
+        true
     }
 
     #[must_use]

@@ -9,6 +9,7 @@ pub mod inference;
 pub mod introspection;
 pub mod inverted_atom_index;
 pub mod memory;
+pub mod memory_snapshot;
 mod nal_filter;
 pub mod narsese;
 pub mod network;
@@ -35,6 +36,10 @@ pub use introspection::{
 };
 pub use inverted_atom_index::InvertedAtomIndex;
 pub use memory::{AddEventOptions, Memory};
+pub use memory_snapshot::{
+    ConceptRecord, EventRecord, ImplicationRecord, MemorySnapshot, MemorySnapshotError,
+    UsageRecord, decode_term, encode_term,
+};
 pub use narsese::{Narsese, NarseseError, Punctuation, Sentence, Tense};
 pub use network::{
     InputOutcome, MetricClient, UdpNar, UdpNarError, UdpReceiver, UdpSender, encode_counter,

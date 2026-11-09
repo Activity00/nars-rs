@@ -8,6 +8,7 @@ pub mod auth;
 pub mod compare;
 pub mod error;
 mod history;
+mod memory_context;
 pub mod routes;
 pub mod sse;
 pub mod state;

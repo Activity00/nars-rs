@@ -8,6 +8,7 @@ use crate::config::{
     ATOMIC_TERM_LEN_MAX, ATOMS_MAX, COMPOUND_TERM_SIZE_MAX, NAR_DEFAULT_CONFIDENCE,
     NAR_DEFAULT_FREQUENCY,
 };
+use crate::memory_snapshot::{LanguageRecord, ValueRecord};
 use crate::{Atom, Term, Truth};
 
 const RULE_TABLE_VARS: &str = "ABCMRSPXYZ";
@@ -155,6 +156,71 @@ impl Narsese {
         atom.checked_sub(1)
             .and_then(|index| self.atom_names.get(usize::from(index)))
             .map(String::as_str)
+    }
+
+    /// Captures the atom table so stored terms keep their meaning across
+    /// processes. Term atoms are numeric ids, not names.
+    #[must_use]
+    pub fn to_language_record(&self) -> LanguageRecord {
+        LanguageRecord {
+            atoms: self.atom_names.clone(),
+            values: self
+                .atom_values
+                .iter()
+                .map(|value| {
+                    value.as_ref().map(|value| ValueRecord {
+                        value: value.value,
+                        measurement: value.measurement.clone(),
+                    })
+                })
+                .collect(),
+            self_atom: self.self_atom,
+        }
+    }
+
+    /// Rebuilds a parser from a stored atom table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the table is oversized, inconsistent, or contains
+    /// duplicate or empty names.
+    pub fn from_language_record(record: &LanguageRecord) -> Result<Self, NarseseError> {
+        if record.atoms.len() > ATOMS_MAX {
+            return Err(NarseseError::new("stored atom table exceeds ATOMS_MAX"));
+        }
+        if record.values.len() > record.atoms.len() {
+            return Err(NarseseError::new(
+                "stored atom values outnumber stored atoms",
+            ));
+        }
+        let mut this = Self {
+            atom_names: Vec::with_capacity(ATOMS_MAX),
+            atom_ids: HashMap::with_capacity(ATOMS_MAX),
+            atom_values: Vec::with_capacity(ATOMS_MAX),
+            self_atom: record.self_atom,
+        };
+        for (index, name) in record.atoms.iter().enumerate() {
+            if name.is_empty() {
+                return Err(NarseseError::new("stored atom name is empty"));
+            }
+            let atom = u8::try_from(index + 1)
+                .map_err(|_| NarseseError::new("stored atom index overflow"))?;
+            if this.atom_ids.insert(name.clone(), atom).is_some() {
+                return Err(NarseseError::new(format!("duplicate stored atom `{name}`")));
+            }
+            this.atom_names.push(name.clone());
+            this.atom_values.push(
+                record
+                    .values
+                    .get(index)
+                    .and_then(Option::as_ref)
+                    .map(|value| AtomValue {
+                        value: value.value,
+                        measurement: value.measurement.clone(),
+                    }),
+            );
+        }
+        Ok(this)
     }
 
     /// Creates a single-atom term.

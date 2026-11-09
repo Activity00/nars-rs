@@ -11,6 +11,7 @@ description = "Append-only event log, snapshots, and session persistence for nar
 workspace = true
 
 [dependencies]
+nars-core = { workspace = true }
 nars-agent-ir = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

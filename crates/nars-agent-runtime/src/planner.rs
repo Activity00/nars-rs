@@ -26,7 +26,7 @@ use nars_agent_ir::{
     Outcome, ScoredCandidate, SelectedAction, TaskSpec, ToolResult, TruthValue, atomize,
     keyed_atom, short_hash,
 };
-use nars_core::{OperationFeedback, Reasoner, Term, Truth};
+use nars_core::{MemorySnapshot, OperationFeedback, Reasoner, Term, Truth};
 use nars_session::Experience;
 use serde::{Deserialize, Serialize};
 
@@ -150,9 +150,42 @@ impl NarsPlanner {
         tool_names: impl IntoIterator<Item = String>,
         seed: u64,
     ) -> Result<Self, AgentError> {
+        let reasoner = Self::fresh_reasoner(seed)?;
+        Self::with_reasoner(reasoner, run_key, tool_names, seed)
+    }
+
+    /// Creates a planner that continues an earlier agent's long-term memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the stored atom table is incompatible with this
+    /// build or the memory snapshot is malformed.
+    pub fn new_with_snapshot(
+        run_key: impl Into<String>,
+        tool_names: impl IntoIterator<Item = String>,
+        seed: u64,
+        experience: Option<&Experience>,
+        snapshot: &MemorySnapshot,
+    ) -> Result<Self, AgentError> {
+        let mut reasoner =
+            Reasoner::from_snapshot(snapshot).map_err(|error| AgentError::Internal {
+                message: error.to_string(),
+            })?;
+        Self::configure_reasoner(&mut reasoner, seed)?;
+        let mut planner = Self::with_reasoner(reasoner, run_key, tool_names, seed)?;
+        planner.apply_experience(experience);
+        Ok(planner)
+    }
+
+    fn fresh_reasoner(seed: u64) -> Result<Reasoner, AgentError> {
         let mut reasoner = Reasoner::new().map_err(|error| AgentError::Internal {
             message: error.to_string(),
         })?;
+        Self::configure_reasoner(&mut reasoner, seed)?;
+        Ok(reasoner)
+    }
+
+    fn configure_reasoner(reasoner: &mut Reasoner, seed: u64) -> Result<(), AgentError> {
         reasoner.set_motor_babbling_chance(0.0);
         reasoner.set_random_seed(seed);
         // The planner pre-filters and scores candidates, so NARS only needs to
@@ -163,7 +196,15 @@ impl NarsPlanner {
             .map_err(|error| AgentError::Internal {
                 message: error.to_string(),
             })?;
+        Ok(())
+    }
 
+    fn with_reasoner(
+        mut reasoner: Reasoner,
+        run_key: impl Into<String>,
+        tool_names: impl IntoIterator<Item = String>,
+        seed: u64,
+    ) -> Result<Self, AgentError> {
         let capture: Arc<Mutex<Option<Captured>>> = Arc::new(Mutex::new(None));
         let argument_index: Arc<Mutex<ArgumentIndex>> = Arc::new(Mutex::new(HashMap::new()));
         let mut tools = BTreeSet::new();
@@ -228,9 +269,14 @@ impl NarsPlanner {
         experience: Option<&Experience>,
     ) -> Result<Self, AgentError> {
         let mut planner = Self::new(run_key, tool_names, seed)?;
+        planner.apply_experience(experience);
+        Ok(planner)
+    }
+
+    fn apply_experience(&mut self, experience: Option<&Experience>) {
         if let Some(experience) = experience {
             for (tool, stat) in &experience.tools {
-                planner.tool_stats.insert(
+                self.tool_stats.insert(
                     tool.clone(),
                     ToolStat {
                         attempts: stat.attempts,
@@ -241,7 +287,7 @@ impl NarsPlanner {
                 );
             }
             for (signature, stat) in &experience.signatures {
-                planner.signature_stats.insert(
+                self.signature_stats.insert(
                     signature.clone(),
                     ToolStat {
                         attempts: stat.attempts,
@@ -252,7 +298,6 @@ impl NarsPlanner {
                 );
             }
         }
-        Ok(planner)
     }
 
     /// Rebuilds a planner from a snapshot.
@@ -265,18 +310,56 @@ impl NarsPlanner {
         tool_names: impl IntoIterator<Item = String>,
     ) -> Result<Self, AgentError> {
         let mut planner = Self::new(snapshot.run_key.clone(), tool_names, snapshot.seed)?;
-        planner.tool_stats = snapshot.tool_stats.clone();
-        planner.signature_stats = snapshot.signature_stats.clone();
-        planner.decision_count = snapshot.decision_count;
+        planner.apply_planner_snapshot(snapshot)?;
+        Ok(planner)
+    }
+
+    /// Rebuilds a paused run on top of existing long-term memory.
+    ///
+    /// The checkpoint supplies the run's own facts and statistics; the memory
+    /// snapshot supplies everything learned by earlier runs. Both are needed,
+    /// otherwise resuming one run would erase the workspace's history.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the memory snapshot is incompatible or fact replay
+    /// fails.
+    pub fn restore_with_memory(
+        snapshot: &PlannerSnapshot,
+        memory: &MemorySnapshot,
+        tool_names: impl IntoIterator<Item = String>,
+        experience: Option<&Experience>,
+    ) -> Result<Self, AgentError> {
+        let mut planner = Self::new_with_snapshot(
+            snapshot.run_key.clone(),
+            tool_names,
+            snapshot.seed,
+            experience,
+            memory,
+        )?;
+        planner.apply_planner_snapshot(snapshot)?;
+        Ok(planner)
+    }
+
+    fn apply_planner_snapshot(&mut self, snapshot: &PlannerSnapshot) -> Result<(), AgentError> {
+        self.tool_stats = snapshot.tool_stats.clone();
+        self.signature_stats = snapshot.signature_stats.clone();
+        self.decision_count = snapshot.decision_count;
         for fact in &snapshot.facts {
-            planner.commit_fact(fact)?;
+            self.commit_fact(fact)?;
         }
         if let Some(goal) = &snapshot.task_goal {
-            planner.add_task_goal(goal)?;
-            planner.task_goal = Some(goal.clone());
+            self.add_task_goal(goal)?;
+            self.task_goal = Some(goal.clone());
         }
-        planner.task_goal_type = snapshot.task_goal_type;
-        Ok(planner)
+        self.task_goal_type = snapshot.task_goal_type;
+        Ok(())
+    }
+
+    /// Long-term memory together with the atom table it depends on.
+    #[must_use]
+    pub fn memory_snapshot(&self) -> MemorySnapshot {
+        self.reasoner.memory().to_snapshot(self.reasoner.language())
     }
 
     /// Snapshot of the planner state.
@@ -878,5 +961,48 @@ mod tests {
         let decision = planner.decide(1, &[]).unwrap();
         assert!(decision.selected.is_none());
         assert_eq!(decision.source, DecisionSource::None);
+    }
+
+    #[test]
+    fn long_term_memory_survives_a_new_planner() {
+        let mut planner = planner();
+        planner.commit_task(&task(), 0.8).unwrap();
+        let before = planner.memory_snapshot();
+        assert!(!before.concepts.is_empty(), "{before:?}");
+
+        let restored = NarsPlanner::new_with_snapshot(
+            "run_2",
+            [
+                "read_file".to_owned(),
+                "search".to_owned(),
+                "apply_patch".to_owned(),
+            ],
+            7,
+            None,
+            &before,
+        )
+        .unwrap();
+        let after = restored.memory_snapshot();
+        assert_eq!(after.concepts.len(), before.concepts.len());
+        assert_eq!(after.language.atoms, before.language.atoms);
+        assert_eq!(after.next_concept_id, before.next_concept_id);
+    }
+
+    #[test]
+    fn refuses_memory_with_a_drifted_atom_table() {
+        let mut planner = planner();
+        planner.commit_task(&task(), 0.8).unwrap();
+        let mut snapshot = planner.memory_snapshot();
+        snapshot.language.atoms[0] = "renamed".to_owned();
+        assert!(
+            NarsPlanner::new_with_snapshot(
+                "run_2",
+                ["read_file".to_owned(), "search".to_owned()],
+                7,
+                None,
+                &snapshot,
+            )
+            .is_err()
+        );
     }
 }

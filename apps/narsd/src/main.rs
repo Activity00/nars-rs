@@ -9,7 +9,9 @@ use std::sync::Arc;
 use nars_agent_runtime::ActorConfig;
 use nars_model::from_env;
 use nars_server::{AppState, ServerConfig, build_router};
-use nars_session::{FileExperienceStore, FileSessionStore, SessionStore, SqliteSessionStore};
+use nars_session::{
+    FileExperienceStore, FileMemoryStore, FileSessionStore, SessionStore, SqliteSessionStore,
+};
 use nars_tools::mcp::{McpServerConfig, connect, parse_servers};
 use nars_tools::policy::ApprovalMode;
 use tracing_subscriber::EnvFilter;
@@ -86,6 +88,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         |parent| parent.join("experience"),
     );
     let experience = Arc::new(FileExperienceStore::new(experience_root)?);
+    let memory_root = experience_base.parent().map_or_else(
+        || PathBuf::from(".nars-agent/memory"),
+        |parent| parent.join("memory"),
+    );
+    let memory = Arc::new(FileMemoryStore::new(memory_root)?);
     let mut config = ServerConfig {
         provider_name: provider_name.clone(),
         token: args.token,
@@ -97,6 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         workspace_root: args.workspace_root,
         experience: Some(experience),
+        memory: Some(memory),
         extra_tools,
         ..ServerConfig::default()
     };

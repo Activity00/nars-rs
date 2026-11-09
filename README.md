@@ -23,7 +23,9 @@ navigation), renamed, and deleted. Branch runs can be compared with their
 parent source run across status, tools, fallbacks, files, and final answer,
 with selectable runs on both sides. Non-Rust projects verify through a
 policy-gated `run_command` and workspace verification discovery. Runs in the
-same session receive a bounded transcript of earlier completed turns.
+same session receive a bounded transcript of earlier completed turns, and each
+workspace keeps a durable NARS memory (concepts, beliefs, learned implications)
+that is loaded at run start and written back when a run finishes.
 
 ```text
 user message → model (Agent IR) → Rust validation → NARS goals/facts
@@ -42,7 +44,8 @@ user message → model (Agent IR) → Rust validation → NARS goals/facts
   [0008](docs/decisions/0008-session-lifecycle.md),
   [0009](docs/decisions/0009-run-comparison.md),
   [0010](docs/decisions/0010-generic-verification.md),
-  [0011](docs/decisions/0011-session-context.md)
+  [0011](docs/decisions/0011-session-context.md),
+  [0012](docs/decisions/0012-long-term-memory.md)
 - Architecture overview: [docs/architecture/overview.md](docs/architecture/overview.md)
 - Event protocol: [docs/protocol/events.md](docs/protocol/events.md)
 - 中文快速开始: [docs/agent/QUICKSTART_ZH.md](docs/agent/QUICKSTART_ZH.md)

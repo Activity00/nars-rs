@@ -258,8 +258,12 @@ curl -X POST http://127.0.0.1:8787/api/sessions/<session_id>/resume
 - `snapshot.json` 是 checkpoint，含 `state_hash`；
 - Run 列表与历史状态由事件日志投影，不依赖进程内存；
 - `../experience/<hash>.json` 保存同一 workspace 的工具成功率，供后续 Run 复用；
+- `../memory/<workspace-hash>.json` 保存该 workspace 的 NARS 长期记忆
+  （概念、信念、蕴含、原子表）：Run 启动时加载，结束时写回；
+- 记忆快照带 schema 版本和原子表；原子表与当前构建不兼容时拒绝加载，
+  不会用错位的编号污染记忆；
 - 也可以使用 SQLite：`cargo run -p narsd -- --sqlite .nars-agent/sessions.db`；
-- 服务重启后会话仍在；
+- 服务重启后会话仍在，工作区记忆也仍在；
 - 同一事件流重放得到相同 `state_hash`（集成测试覆盖）。
 
 ## 9. 测试

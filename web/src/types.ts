@@ -65,6 +65,7 @@ export interface TaskSpec {
   constraints: string[];
   workspace: string;
   user_message: string;
+  memory_brief?: string[];
   max_steps: number;
 }
 

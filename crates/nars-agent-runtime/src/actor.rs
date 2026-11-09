@@ -10,6 +10,7 @@ use nars_agent_ir::{
     RunState, RunStatus, SessionId, TaskProposal, TaskSpec, TokenUsage, ToolCall, ToolCallId,
     ToolManifest, ToolResult, TruthValue, ValidationContext, atomize, validate_ir,
 };
+use nars_core::MemorySnapshot;
 use nars_model::{ModelMessage, ModelRequest, agent_ir_schema};
 use nars_tools::{ToolBroker, build_call};
 
@@ -36,6 +37,8 @@ pub struct ActorConfig {
     pub clock: Arc<dyn Fn() -> i64 + Send + Sync>,
     /// Workspace experience used to seed tool priors.
     pub experience: Option<nars_session::Experience>,
+    /// Long-term memory to continue from, when the workspace has a snapshot.
+    pub initial_memory: Option<MemorySnapshot>,
 }
 
 impl std::fmt::Debug for ActorConfig {
@@ -60,6 +63,7 @@ impl Default for ActorConfig {
             repair_attempts: 2,
             clock: Arc::new(system_now_ms),
             experience: None,
+            initial_memory: None,
         }
     }
 }
@@ -191,12 +195,21 @@ impl SessionActor {
             .iter()
             .map(|manifest| manifest.name.clone())
             .collect::<Vec<_>>();
-        let planner = NarsPlanner::new_with_experience(
-            run_key,
-            tool_names,
-            config.seed,
-            config.experience.as_ref(),
-        )?;
+        let planner = match config.initial_memory.as_ref() {
+            Some(snapshot) => NarsPlanner::new_with_snapshot(
+                run_key,
+                tool_names,
+                config.seed,
+                config.experience.as_ref(),
+                snapshot,
+            )?,
+            None => NarsPlanner::new_with_experience(
+                run_key,
+                tool_names,
+                config.seed,
+                config.experience.as_ref(),
+            )?,
+        };
         let now = (config.clock)();
         let mut state = RunState::new(run_id, session_id, task.clone(), now);
         state.status = RunStatus::Planning;
@@ -257,7 +270,15 @@ impl SessionActor {
             .iter()
             .map(|manifest| manifest.name.clone())
             .collect::<Vec<_>>();
-        let planner = NarsPlanner::restore(planner_snapshot, tool_names)?;
+        let planner = match config.initial_memory.as_ref() {
+            Some(memory) => NarsPlanner::restore_with_memory(
+                planner_snapshot,
+                memory,
+                tool_names,
+                config.experience.as_ref(),
+            )?,
+            None => NarsPlanner::restore(planner_snapshot, tool_names)?,
+        };
         let system_prompt = prompt::system_prompt(&manifests);
         let repair_attempts = config.repair_attempts;
         let task_committed = planner_snapshot.task_goal.is_some();
@@ -308,6 +329,12 @@ impl SessionActor {
     #[must_use]
     pub fn planner_snapshot(&self) -> PlannerSnapshot {
         self.planner.snapshot()
+    }
+
+    /// Long-term memory accumulated by this run so far.
+    #[must_use]
+    pub fn memory_snapshot(&self) -> MemorySnapshot {
+        self.planner.memory_snapshot()
     }
 
     /// Whether the run is finished.

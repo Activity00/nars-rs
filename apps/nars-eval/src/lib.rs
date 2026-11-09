@@ -399,6 +399,7 @@ pub async fn run_task(
         workspace: workspace.path().display().to_string(),
         user_message: task.prompt.clone(),
         history: Vec::new(),
+        memory_brief: Vec::new(),
         max_steps: task.limits.max_steps.unwrap_or(16).clamp(1, 100),
         verification: Vec::new(),
     };

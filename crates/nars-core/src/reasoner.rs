@@ -16,6 +16,7 @@ use crate::config::{
 use crate::inference::{
     belief_induction, belief_intersection, goal_deduction, revision_and_choice,
 };
+use crate::memory_snapshot::MemorySnapshot;
 use crate::variable::{
     UnifyOptions, introduce_conjunction_variables, introduce_implication_variables,
 };
@@ -125,6 +126,59 @@ impl Reasoner {
             random_state: 1,
             current_time: 1,
         })
+    }
+
+    /// Builds a runtime on top of stored long-term memory.
+    ///
+    /// The stored atom table must extend this build's built-in table: atoms are
+    /// numeric ids, so a shifted prefix would change what every stored term
+    /// means.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the atom table is incompatible or the memory
+    /// snapshot is malformed.
+    pub fn from_snapshot(snapshot: &MemorySnapshot) -> Result<Self, ReasonerError> {
+        let builtins = Narsese::new();
+        let stored = Narsese::from_language_record(&snapshot.language)
+            .map_err(|error| ReasonerError::new(error.to_string()))?;
+        let builtin_atoms = builtins.to_language_record().atoms;
+        if !stored
+            .to_language_record()
+            .atoms
+            .starts_with(&builtin_atoms)
+            || stored.self_atom() != builtins.self_atom()
+        {
+            return Err(ReasonerError::new(
+                "stored atom table does not extend this build's built-in table",
+            ));
+        }
+
+        let mut reasoner = Self::new()?;
+        reasoner.language = stored;
+        reasoner.rules = RuleEngine::ona(&mut reasoner.language)
+            .map_err(|error| ReasonerError::new(error.to_string()))?;
+        reasoner.memory = Memory::from_snapshot(snapshot)
+            .map_err(|error| ReasonerError::new(error.to_string()))?;
+        reasoner.set_next_evidence_id(reasoner.memory.max_evidence_id().saturating_add(1));
+        Ok(reasoner)
+    }
+
+    /// The atom table shared by every term in this runtime.
+    #[must_use]
+    pub const fn language(&self) -> &Narsese {
+        &self.language
+    }
+
+    /// Current long-term memory.
+    #[must_use]
+    pub const fn memory(&self) -> &Memory {
+        &self.memory
+    }
+
+    /// Replaces long-term memory, for example after loading a snapshot.
+    pub fn set_memory(&mut self, memory: Memory) {
+        self.memory = memory;
     }
 
     #[must_use]

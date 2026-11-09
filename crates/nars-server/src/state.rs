@@ -14,8 +14,8 @@ use nars_agent_runtime::{
 };
 use nars_model::ModelProvider;
 use nars_session::{
-    EventEnvelope, Experience, ExperienceStore, RunSummary, SessionMeta, SessionSnapshot,
-    SessionStore, StoreError, summarize_runs,
+    EventEnvelope, Experience, ExperienceStore, MemoryStore, RunSummary, SessionMeta,
+    SessionSnapshot, SessionStore, StoreError, summarize_runs,
 };
 use nars_tools::policy::{ApprovalMode, Policy, PolicyConfig};
 use nars_tools::{BrokerConfig, Sandbox, Tool, ToolBroker};
@@ -45,6 +45,8 @@ pub struct ServerConfig {
     pub workspace_root: Option<PathBuf>,
     /// Optional cross-run experience store.
     pub experience: Option<Arc<dyn ExperienceStore>>,
+    /// Optional workspace long-term memory store.
+    pub memory: Option<Arc<dyn MemoryStore>>,
     /// Additional tools, typically MCP adapters.
     pub extra_tools: Vec<Arc<dyn Tool>>,
 }
@@ -74,6 +76,7 @@ impl Default for ServerConfig {
             static_dir: None,
             workspace_root: None,
             experience: None,
+            memory: None,
             extra_tools: Vec::new(),
         }
     }
@@ -180,6 +183,7 @@ impl AppState {
             workspace: String::new(),
             user_message: message.to_owned(),
             history: Vec::new(),
+            memory_brief: Vec::new(),
             max_steps: max_steps.unwrap_or(self.config.max_steps).clamp(1, 100),
             verification: Vec::new(),
         };
@@ -211,13 +215,27 @@ impl AppState {
             .experience
             .as_ref()
             .and_then(|store| store.load(&workspace_text).ok());
+        let memory = self.config.memory.as_ref().and_then(|store| {
+            match store.load(&workspace_text) {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    tracing::warn!(%error, workspace = %workspace_text, "failed to load workspace memory");
+                    None
+                }
+            }
+        });
+        if let Some(snapshot) = &memory {
+            task.memory_brief = crate::memory_context::memory_brief(snapshot);
+        }
         let mut actor_config = self.config.actor.clone();
         actor_config.experience = experience;
+        actor_config.initial_memory = memory;
         let sink = Arc::new(StoreSink::new(
             session_id.clone(),
             Arc::clone(&self.store),
             sender.clone(),
             self.config.experience.clone(),
+            self.config.memory.clone(),
             workspace_text,
         ));
 
@@ -496,13 +514,24 @@ impl AppState {
             .experience
             .as_ref()
             .and_then(|store| store.load(&workspace_text).ok());
+        let memory = self.config.memory.as_ref().and_then(|store| {
+            match store.load(&workspace_text) {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    tracing::warn!(%error, workspace = %workspace_text, "failed to load workspace memory");
+                    None
+                }
+            }
+        });
         let mut actor_config = self.config.actor.clone();
         actor_config.experience = experience;
+        actor_config.initial_memory = memory;
         let sink = Arc::new(StoreSink::new(
             session_id.clone(),
             Arc::clone(&self.store),
             sender,
             self.config.experience.clone(),
+            self.config.memory.clone(),
             workspace_text,
         ));
         let runtime = AgentRuntime::new(
@@ -645,6 +674,7 @@ pub struct StoreSink {
     sender: broadcast::Sender<EventEnvelope>,
     last_seq: AtomicU64,
     experience: Option<Arc<dyn ExperienceStore>>,
+    memory: Option<Arc<dyn MemoryStore>>,
     workspace: String,
     task_counted: std::sync::atomic::AtomicBool,
 }
@@ -657,6 +687,7 @@ impl StoreSink {
         store: Arc<dyn SessionStore>,
         sender: broadcast::Sender<EventEnvelope>,
         experience: Option<Arc<dyn ExperienceStore>>,
+        memory: Option<Arc<dyn MemoryStore>>,
         workspace: String,
     ) -> Self {
         Self {
@@ -665,8 +696,18 @@ impl StoreSink {
             sender,
             last_seq: AtomicU64::new(0),
             experience,
+            memory,
             workspace,
             task_counted: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn persist_memory(&self, snapshot: &nars_core::MemorySnapshot) {
+        let Some(store) = &self.memory else {
+            return;
+        };
+        if let Err(error) = store.save(&self.workspace, snapshot) {
+            tracing::warn!(%error, workspace = %self.workspace, "failed to save workspace memory");
         }
     }
 
@@ -738,6 +779,10 @@ impl RuntimeSink for StoreSink {
             tracing::error!(%error, "failed to save session snapshot");
         }
         self.persist_experience(state, planner);
+    }
+
+    fn on_memory(&self, snapshot: &nars_core::MemorySnapshot) {
+        self.persist_memory(snapshot);
     }
 }
 

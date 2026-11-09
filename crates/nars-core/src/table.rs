@@ -25,6 +25,17 @@ impl ImplicationTable {
         }
     }
 
+    /// Rebuilds a table from already-ordered entries, trimming to capacity.
+    ///
+    /// Restoring keeps the stored order instead of re-ranking, so a snapshot
+    /// round trip cannot quietly reorder learned implications.
+    #[must_use]
+    pub fn from_entries(mut entries: Vec<Implication>) -> Self {
+        let capacity = TABLE_SIZE;
+        entries.truncate(capacity);
+        Self { entries, capacity }
+    }
+
     #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()

@@ -115,6 +115,12 @@ pub struct TaskSpec {
     /// `user_message`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<ChatMessage>,
+    /// Compact summary of long-term memory known before this run started.
+    ///
+    /// Projected from the workspace memory snapshot when the run starts, so the
+    /// model can use earlier knowledge and replay stays deterministic.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub memory_brief: Vec<String>,
     /// Maximum agent steps.
     #[serde(default = "default_max_steps")]
     pub max_steps: u32,
@@ -142,6 +148,7 @@ impl TaskSpec {
             workspace: workspace.into(),
             user_message: user_message.into(),
             history: Vec::new(),
+            memory_brief: Vec::new(),
             max_steps: default_max_steps(),
             verification: Vec::new(),
         }

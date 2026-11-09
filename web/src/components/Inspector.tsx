@@ -82,6 +82,23 @@ export function Inspector({
         </div>
       </section>
 
+      {run.task?.memory_brief && run.task.memory_brief.length > 0 && (
+        <section>
+          <h3>Long-term memory</h3>
+          <div className="muted small">
+            {run.task.memory_brief.length} prior concept
+            {run.task.memory_brief.length === 1 ? "" : "s"} loaded for this run
+          </div>
+          <ul className="constraints">
+            {run.task.memory_brief.slice(0, 6).map((line) => (
+              <li key={line} className="mono small">
+                {line}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {(parent || childCount > 0) && (
         <section>
           <h3>Lineage</h3>

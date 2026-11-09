@@ -20,6 +20,8 @@ pub trait RuntimeSink: Send + Sync {
     fn on_state(&self, _state: &RunState) {}
     /// Called when the runtime requests a durable checkpoint.
     fn on_checkpoint(&self, _state: &RunState, _planner: &PlannerSnapshot) {}
+    /// Called once when a run terminates, with its updated long-term memory.
+    fn on_memory(&self, _snapshot: &nars_core::MemorySnapshot) {}
 }
 
 /// A sink that discards everything.
@@ -295,11 +297,15 @@ async fn run_loop(
                 Command::Checkpoint => {
                     sink.on_checkpoint(actor.state(), &actor.planner_snapshot());
                 }
-                Command::Finish => return,
+                Command::Finish => {
+                    sink.on_memory(&actor.memory_snapshot());
+                    return;
+                }
             }
         }
 
         if actor.is_finished() {
+            sink.on_memory(&actor.memory_snapshot());
             return;
         }
 
@@ -309,7 +315,10 @@ async fn run_loop(
                 queue.extend(output.commands);
                 publish(&actor, &sink, &state, &event_tx, output.events);
             }
-            None => return,
+            None => {
+                sink.on_memory(&actor.memory_snapshot());
+                return;
+            }
         }
     }
 }

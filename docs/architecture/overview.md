@@ -168,6 +168,16 @@ Pending → Planning → (AwaitingApproval) → ExecutingTool → Planning → �
     └── snapshot.json   # 最新 checkpoint（RunState + PlannerSnapshot + hash + last_seq）
 ```
 
+长期记忆单独存放，按工作区哈希命名：
+
+```text
+.nars-agent/memory/
+└── <workspace-hash>.json   # MemorySnapshot：概念、信念、蕴含、原子表
+```
+
+Run 启动时载入并恢复 Reasoner，Run 结束（`RuntimeSink::on_memory`）写回；
+快照带 schema 版本和原子表，原子表与当前构建不兼容时拒绝加载。
+
 SQLite 存储（`narsd --sqlite .nars-agent/sessions.db`）：
 
 ```sql
@@ -191,7 +201,16 @@ Run 历史不依赖进程内状态：`summarize_runs` 从事件日志投影 `Run
 [ADR 0008](../decisions/0008-session-lifecycle.md) 与
 [ADR 0009](../decisions/0009-run-comparison.md)。
 
-## 7.5 跨 Run 上下文
+## 7.5 长期记忆
+
+每个工作区维护一份可持久化的 NARS 记忆：概念、信念、真值、学到的蕴含、优先级与
+usage。Run 开始时从快照恢复 Reasoner，结束时把更新后的记忆写回；同时从快照投影最多
+12 条概念写入 `TaskSpec.memory_brief`，以 `long_term_memory` 注入 prompt。
+
+记忆缺失时行为与以前一致（空记忆启动）。详见
+[ADR 0012](../decisions/0012-long-term-memory.md)。
+
+## 7.6 跨 Run 上下文
 
 每个 Run 启动时，服务端从事件日志投影最近 6 个已完成轮次，写入
 `TaskSpec.history`，随 `RunStarted` 持久化。后续消息因此能引用上一轮结果，

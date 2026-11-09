@@ -47,6 +47,9 @@ pub fn system_prompt(manifests: &[ToolManifest]) -> String {
          - A `conversation` array may carry earlier turns of the same session. Treat it as\n\
            background: the current `task.user_message` is the instruction to execute now, and do\n\
            not redo work an earlier turn already completed unless this message asks for it.\n\
+         - A `long_term_memory` array may list facts retained from earlier runs in this\n\
+           workspace. It is prior knowledge, not ground truth: verify anything that may have\n\
+           changed before acting on it.\n\
          \n\
          AGENT IR JSON SCHEMA\n\
          {}\n\
@@ -184,6 +187,9 @@ fn render_state(state: &RunState, phase: &str, plan: Option<&TaskPlanView>) -> S
     if !conversation.is_empty() {
         envelope["conversation"] = json!(conversation);
     }
+    if !state.task.memory_brief.is_empty() {
+        envelope["long_term_memory"] = json!(state.task.memory_brief);
+    }
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
 
@@ -242,6 +248,28 @@ mod tests {
         assert_eq!(value["phase"], "plan");
         assert_eq!(value["task"]["workspace"], "/tmp/ws");
         assert!(value.get("conversation").is_none());
+    }
+
+    #[test]
+    fn renders_long_term_memory_as_prior_knowledge() {
+        let mut task = TaskSpec::new(
+            GoalSpec::new(GoalType::Investigate, "check the cat"),
+            "/tmp/ws",
+            "is the cat an animal?",
+        );
+        task.memory_brief = vec!["cat [frequency 1.00, confidence 0.90]".to_owned()];
+        let state = RunState::new(
+            RunId::from_static("run_1"),
+            SessionId::from_static("ses_1"),
+            task,
+            0,
+        );
+        let message = plan_message(&state, None);
+        let value: serde_json::Value = serde_json::from_str(&message.content).unwrap();
+        assert_eq!(
+            value["long_term_memory"][0],
+            "cat [frequency 1.00, confidence 0.90]"
+        );
     }
 
     #[test]
