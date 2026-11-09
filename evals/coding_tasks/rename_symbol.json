@@ -1,13 +1,97 @@
 {
   "id": "rename_symbol",
   "category": "coding_tasks",
+  "goal_type": "modify_code",
   "prompt": "Rename the function alpha to beta in src/lib.rs, then verify with cargo check.",
-  "setup": {"fixture": "rename_symbol"},
-  "limits": {"max_steps": 10, "max_model_calls": 8},
+  "setup": {
+    "fixture": "rename_symbol"
+  },
+  "limits": {
+    "max_steps": 10,
+    "max_model_calls": 8
+  },
+  "script": [
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "modify_code",
+        "target": "src/lib.rs",
+        "description": "Rename alpha to beta"
+      },
+      "candidate_actions": [
+        {
+          "tool": "read_file",
+          "arguments": {
+            "path": "src/lib.rs"
+          },
+          "confidence": 0.9
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "modify_code",
+        "target": "src/lib.rs",
+        "description": "Rename alpha to beta"
+      },
+      "candidate_actions": [
+        {
+          "tool": "apply_patch",
+          "arguments": {
+            "path": "src/lib.rs",
+            "old_text": "pub fn alpha() -> i32 {",
+            "new_text": "pub fn beta() -> i32 {"
+          },
+          "confidence": 0.95
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "modify_code",
+        "target": "src/lib.rs",
+        "description": "Verify the rename"
+      },
+      "candidate_actions": [
+        {
+          "tool": "cargo_check",
+          "arguments": {},
+          "confidence": 0.9
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "final_answer",
+      "text": "Renamed `alpha` to `beta` in `src/lib.rs` and `cargo check` passed.",
+      "success": true
+    }
+  ],
   "expect": {
-    "final_answer_contains": ["beta"],
-    "files_modified": ["src/lib.rs"],
-    "tools_used": ["read_file", "apply_patch", "cargo_check"],
-    "approval_required": true
+    "final_answer_contains": [
+      "beta"
+    ],
+    "files_modified": [
+      "src/lib.rs"
+    ],
+    "tools_used": [
+      "read_file",
+      "apply_patch",
+      "cargo_check"
+    ],
+    "approval_required": true,
+    "min_nars_decisions": 3,
+    "plan_stages": [
+      "investigate",
+      "change",
+      "verify",
+      "answer"
+    ],
+    "run_status": "completed",
+    "replay_hash_equal": true
   }
 }

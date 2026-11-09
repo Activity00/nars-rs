@@ -10,6 +10,7 @@ use nars_agent_runtime::ActorConfig;
 use nars_model::from_env;
 use nars_server::{AppState, ServerConfig, build_router};
 use nars_session::{FileExperienceStore, FileSessionStore};
+use nars_tools::mcp::{McpServerConfig, connect_stdio, parse_servers};
 use nars_tools::policy::ApprovalMode;
 use tracing_subscriber::EnvFilter;
 
@@ -22,6 +23,7 @@ struct Args {
     max_steps: u32,
     workspace_root: Option<PathBuf>,
     token: Option<String>,
+    mcp_config: Option<PathBuf>,
 }
 
 impl Default for Args {
@@ -34,6 +36,7 @@ impl Default for Args {
             max_steps: 24,
             workspace_root: None,
             token: std::env::var("NARS_AGENT_TOKEN").ok(),
+            mcp_config: None,
         }
     }
 }
@@ -57,6 +60,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    let mut extra_tools = Vec::new();
+    for mcp in load_mcp_configs(&args)? {
+        match connect_stdio(&mcp) {
+            Ok(tools) => {
+                tracing::info!(server = %mcp.name, tools = tools.len(), "connected MCP server");
+                extra_tools.extend(tools);
+            }
+            Err(error) => {
+                tracing::warn!(server = %mcp.name, %error, "failed to connect MCP server");
+            }
+        }
+    }
+
     let store = Arc::new(FileSessionStore::new(&args.store)?);
     let experience_root = args.store.parent().map_or_else(
         || PathBuf::from(".nars-agent/experience"),
@@ -74,6 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         workspace_root: args.workspace_root,
         experience: Some(experience),
+        extra_tools,
         ..ServerConfig::default()
     };
     if let Some(static_dir) = &args.static_dir
@@ -140,6 +157,11 @@ fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
                 ));
             }
             "--token" => args.token = Some(iter.next().ok_or("--token requires a value")?),
+            "--mcp-config" => {
+                args.mcp_config = Some(PathBuf::from(
+                    iter.next().ok_or("--mcp-config requires a path")?,
+                ));
+            }
             "--help" | "-h" => {
                 println!(
                     "narsd — NARS agent daemon\n\n\
@@ -152,13 +174,15 @@ fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
                      \x20 --approval <ask|auto|deny>  approval policy (default ask)\n\
                      \x20 --max-steps <N>            default step budget (default 24)\n\
                      \x20 --workspace-root <PATH>    restrict session workspaces\n\
-                     \x20 --token <TOKEN>            require a bearer token\n\n\
+                     \x20 --token <TOKEN>            require a bearer token\n\
+                     \x20 --mcp-config <PATH>        JSON MCP server configuration\n\n\
                      ENVIRONMENT:\n\
                      \x20 NARS_AGENT_PROVIDER=openai|anthropic|ollama|demo|echo\n\
                      \x20 NARS_AGENT_MODEL=<model>\n\
                      \x20 NARS_AGENT_BASE_URL=<url>\n\
                      \x20 NARS_AGENT_API_KEY=<key>\n\
-                     \x20 NARS_AGENT_JSON_SCHEMA=1\n"
+                     \x20 NARS_AGENT_JSON_SCHEMA=1\n\
+                     \x20 NARS_AGENT_MCP_SERVERS='[{{\"name\":...,\"command\":...}}]'\n"
                 );
                 std::process::exit(0);
             }
@@ -166,4 +190,18 @@ fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
         }
     }
     Ok(args)
+}
+
+fn load_mcp_configs(args: &Args) -> Result<Vec<McpServerConfig>, Box<dyn std::error::Error>> {
+    let mut configs = Vec::new();
+    if let Some(path) = &args.mcp_config {
+        let text = std::fs::read_to_string(path)?;
+        configs.extend(parse_servers(&text)?);
+    }
+    if let Ok(text) = std::env::var("NARS_AGENT_MCP_SERVERS")
+        && !text.trim().is_empty()
+    {
+        configs.extend(parse_servers(&text)?);
+    }
+    Ok(configs)
 }

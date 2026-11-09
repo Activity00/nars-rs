@@ -100,6 +100,36 @@ cargo run -p narsd     # narsd 自动服务 web/dist
 7. 观察工具输出、NARS 事实、下一次决策；
 8. 可随时 **Pause / Resume / Cancel**。
 
+## 5.5 接入 MCP 工具
+
+创建 `mcp.json`：
+
+```json
+{
+  "servers": [
+    {
+      "name": "files",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/absolute/path"],
+      "side_effect": "external_side_effect",
+      "requires_approval": true
+    }
+  ]
+}
+```
+
+启动：
+
+```bash
+cargo run -p narsd -- --mcp-config mcp.json
+# 或
+NARS_AGENT_MCP_SERVERS='[{"name":"files","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/tmp"]}]' \
+  cargo run -p narsd
+```
+
+工具会以 `mcp_<server>_<tool>` 出现在 `/api/tools`、提示词和 Web UI 中。默认外部副作用 + 审批；
+连接失败只记录 warning，不影响 `narsd` 启动。详见 [ADR 0005](../decisions/0005-mcp.md)。
+
 ## 6. 审批策略
 
 ```bash
@@ -183,6 +213,10 @@ cargo test --workspace
 
 # Web 类型检查 + 构建
 cd web && npm run build
+
+# 确定性评测集（6 个任务）
+cargo run -p nars-eval -- --provider scripted \
+  --out target/eval-report.json --markdown-out target/eval-report.md
 ```
 
 ## 10. 当前限制

@@ -321,3 +321,53 @@ async fn approval_route_executes_a_patch() {
         "fn beta() {}\n"
     );
 }
+
+struct FakeMcpTool {
+    manifest: nars_agent_ir::ToolManifest,
+}
+
+impl nars_tools::manifest::Tool for FakeMcpTool {
+    fn manifest(&self) -> &nars_agent_ir::ToolManifest {
+        &self.manifest
+    }
+
+    fn execute(
+        &self,
+        call: &nars_agent_ir::ToolCall,
+        _context: &nars_tools::manifest::ToolContext,
+    ) -> nars_agent_ir::ToolResult {
+        nars_agent_ir::ToolResult::success(call.id.clone(), "mcp")
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn extra_mcp_tools_are_exposed_by_the_api() {
+    let workspace = TempDir::new().unwrap();
+    let store_dir = TempDir::new().unwrap();
+    let store = Arc::new(FileSessionStore::new(store_dir.path()).unwrap());
+    let provider = Arc::new(ScriptedProvider::new(Vec::new()));
+    let manifest = nars_agent_ir::ToolManifest::new(
+        "mcp_files_read".to_owned(),
+        "remote read".to_owned(),
+        json!({"type": "object"}),
+        nars_agent_ir::SideEffect::ExternalSideEffect,
+    )
+    .with_approval();
+    let config = ServerConfig {
+        provider_name: "scripted".to_owned(),
+        extra_tools: vec![Arc::new(FakeMcpTool { manifest })],
+        static_dir: None,
+        ..ServerConfig::default()
+    };
+    let state = AppState::new(store, provider as Arc<dyn ModelProvider>, config);
+    let app = build_router(state);
+    let (status, tools) = request(&app, Method::GET, "/api/tools", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let names = tools["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"mcp_files_read"), "{names:?}");
+}

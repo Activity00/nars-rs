@@ -1,12 +1,68 @@
 {
   "id": "approval_denied",
   "category": "regression",
+  "goal_type": "modify_code",
   "prompt": "Change src/lib.rs to print a banner.",
-  "setup": {"fixture": "rename_symbol"},
-  "limits": {"max_steps": 6, "max_model_calls": 4},
+  "setup": {
+    "fixture": "rename_symbol"
+  },
+  "limits": {
+    "max_steps": 6,
+    "max_model_calls": 6
+  },
+  "deny_approvals": true,
+  "script": [
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "modify_code",
+        "target": "src/lib.rs",
+        "description": "Modify the file"
+      },
+      "candidate_actions": [
+        {
+          "tool": "read_file",
+          "arguments": {
+            "path": "src/lib.rs"
+          },
+          "confidence": 0.9
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "modify_code",
+        "target": "src/lib.rs",
+        "description": "Modify the file"
+      },
+      "candidate_actions": [
+        {
+          "tool": "apply_patch",
+          "arguments": {
+            "path": "src/lib.rs",
+            "old_text": "pub fn alpha() -> i32 {",
+            "new_text": "pub fn banner() -> i32 {"
+          },
+          "confidence": 0.95
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "clarification",
+      "question": "The patch was denied; the file is unchanged. How should I proceed?",
+      "options": [
+        "stop"
+      ]
+    }
+  ],
   "expect": {
-    "approval_denied": true,
-    "files_unchanged": ["src/lib.rs"],
+    "approval_required": true,
+    "files_unchanged": [
+      "src/lib.rs"
+    ],
     "run_status": "completed"
   }
 }

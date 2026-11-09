@@ -190,6 +190,30 @@ UI 不直接访问文件系统，也不自行推断执行结果；所有内容�
 | 步数超限 | `RunFailed(StepLimit)` |
 | 事件重放摘要不一致 | `AgentError::Replay` |
 
+## 9.5 MCP 工具
+
+`narsd --mcp-config <file>` 或 `NARS_AGENT_MCP_SERVERS` 可以连接 stdio MCP server：
+
+```text
+MCP tools/list → ToolManifest(mcp_<server>_<tool>)
+              → 注册进 ToolRegistry
+              → NARS/Planner/Broker/UI 与内置工具一致
+```
+
+外部工具默认 `ExternalSideEffect` 且需要审批。退出时子进程随 `StdioTransport` 回收。
+详见 [ADR 0005](../decisions/0005-mcp.md)。
+
+## 9.6 评测
+
+`nars-eval` 直接驱动真实运行时，记录工具顺序、NARS 决策、fallback、审批、文件变化
+与重放一致性：
+
+```bash
+cargo run -p nars-eval -- --provider scripted
+```
+
+任务与 fixture 位于 `evals/`，详见 [ADR 0006](../decisions/0006-evaluation.md)。
+
 ## 10. 阶段状态
 
 | 阶段 | 状态 |
@@ -201,5 +225,5 @@ UI 不直接访问文件系统，也不自行推断执行结果；所有内容�
 | 4 API + Web UI | ✅ Axum + SSE + React 三栏 |
 | 5 持久化与恢复 | ✅ JSONL + Snapshot + 重放 + checkpoint resume；SQLite 预留 |
 | 6 NARS 原生任务调度 | ✅ 线性阶段计划、前置条件、失败回退、软时间预算、workspace 经验复用 |
-| 7 MCP | ⏳ |
-| 8 评测与发布 | 🚧 测试基线已建立，评测集待补 |
+| 7 MCP | ✅ stdio 客户端、工具转换、外部权限；HTTP transport 待补 |
+| 8 评测与发布 | ✅ `nars-eval` runner、6 个固定任务、指标与报告；CI 发布流水线待补 |

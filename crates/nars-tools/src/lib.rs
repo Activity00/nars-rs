@@ -9,6 +9,7 @@ pub mod broker;
 pub mod builtin;
 pub mod diff;
 pub mod manifest;
+pub mod mcp;
 pub mod policy;
 pub mod process;
 pub mod sandbox;
@@ -18,6 +19,10 @@ pub use broker::{BrokerConfig, ToolBroker, build_call};
 pub use manifest::{
     RegistryError, Tool, ToolContext, ToolRegistry, boolean_schema, integer_schema, object_schema,
     string_array_schema, string_schema,
+};
+pub use mcp::{
+    McpCallResult, McpClient, McpClientApi, McpError, McpServerConfig, McpTool, McpToolDescription,
+    McpTransport, StdioTransport, connect_stdio, parse_servers,
 };
 pub use policy::{ApprovalMode, Policy, PolicyConfig, PolicyDecision};
 pub use sandbox::{Sandbox, SandboxError};

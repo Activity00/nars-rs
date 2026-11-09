@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use nars_agent_ir::{
     AgentEvent, GoalSpec, GoalType, RunId, RunState, RunStatus, SessionId, TaskSpec, ToolCallId,
+    ToolManifest,
 };
 use nars_agent_runtime::{
     ActorConfig, AgentRuntime, PlannerSnapshot, RunHandle, RuntimeConfig, RuntimeSink,
@@ -16,8 +17,8 @@ use nars_session::{
     EventEnvelope, Experience, ExperienceStore, RunSummary, SessionMeta, SessionSnapshot,
     SessionStore, StoreError,
 };
-use nars_tools::ToolBroker;
 use nars_tools::policy::{ApprovalMode, Policy, PolicyConfig};
+use nars_tools::{BrokerConfig, Sandbox, Tool, ToolBroker};
 use tokio::sync::broadcast;
 
 use crate::error::ApiError;
@@ -43,6 +44,8 @@ pub struct ServerConfig {
     pub workspace_root: Option<PathBuf>,
     /// Optional cross-run experience store.
     pub experience: Option<Arc<dyn ExperienceStore>>,
+    /// Additional tools, typically MCP adapters.
+    pub extra_tools: Vec<Arc<dyn Tool>>,
 }
 
 impl std::fmt::Debug for ServerConfig {
@@ -53,6 +56,7 @@ impl std::fmt::Debug for ServerConfig {
             .field("approval_mode", &self.approval_mode)
             .field("max_steps", &self.max_steps)
             .field("static_dir", &self.static_dir)
+            .field("extra_tools", &self.extra_tools.len())
             .finish_non_exhaustive()
     }
 }
@@ -69,6 +73,7 @@ impl Default for ServerConfig {
             static_dir: None,
             workspace_root: None,
             experience: None,
+            extra_tools: Vec::new(),
         }
     }
 }
@@ -124,6 +129,35 @@ impl AppState {
             .clone()
     }
 
+    /// All tool manifests exposed by the API and the model prompt.
+    #[must_use]
+    pub fn tool_manifests(&self) -> Vec<ToolManifest> {
+        let mut registry = nars_tools::builtin::builtin_registry();
+        for tool in &self.config.extra_tools {
+            if let Err(error) = registry.register(Arc::clone(tool)) {
+                tracing::warn!(%error, "failed to register extra tool");
+            }
+        }
+        registry.manifests()
+    }
+
+    fn broker_for(&self, workspace: &Path, policy: Policy) -> Result<Arc<ToolBroker>, ApiError> {
+        let mut registry = nars_tools::builtin::builtin_registry();
+        for tool in &self.config.extra_tools {
+            registry
+                .register(Arc::clone(tool))
+                .map_err(|error| ApiError::Internal(error.to_string()))?;
+        }
+        let sandbox =
+            Sandbox::new(workspace).map_err(|error| ApiError::Internal(error.to_string()))?;
+        Ok(Arc::new(ToolBroker::new(
+            registry,
+            policy,
+            sandbox,
+            BrokerConfig::default(),
+        )))
+    }
+
     /// Starts a run for a user message.
     ///
     /// # Errors
@@ -145,10 +179,7 @@ impl AppState {
             mode: self.config.approval_mode,
             ..PolicyConfig::default()
         });
-        let broker = Arc::new(
-            ToolBroker::with_builtin_tools(&workspace, policy)
-                .map_err(|error| ApiError::Internal(error.to_string()))?,
-        );
+        let broker = self.broker_for(&workspace, policy)?;
         let sender = self.session_sender(session_id);
         let workspace_text = workspace.display().to_string();
         let experience = self
@@ -235,10 +266,7 @@ impl AppState {
             mode: self.config.approval_mode,
             ..PolicyConfig::default()
         });
-        let broker = Arc::new(
-            ToolBroker::with_builtin_tools(&workspace, policy)
-                .map_err(|error| ApiError::Internal(error.to_string()))?,
-        );
+        let broker = self.broker_for(&workspace, policy)?;
         let sender = self.session_sender(session_id);
         let workspace_text = workspace.display().to_string();
         let experience = self

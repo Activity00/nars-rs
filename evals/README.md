@@ -4,6 +4,20 @@ The evaluation set is intentionally small and deterministic. Phase 1–5 verify
 the control loop; Phase 6–8 use these tasks to measure whether NARS actually
 adds value over a pure model loop.
 
+## Running
+
+```bash
+cargo run -p nars-eval -- --provider scripted \
+  --out target/eval-report.json --markdown-out target/eval-report.md
+```
+
+- `scripted` uses each task's `script` array for deterministic control-flow tests.
+- `demo` uses the offline demo provider.
+- `env` uses `NARS_AGENT_PROVIDER` for real-model evaluation.
+
+The runner auto-approves pending calls by default; `deny_approvals=true` rejects them.
+`pause_before_start=true` exercises pause/resume.
+
 ## Task format
 
 ```json
@@ -45,7 +59,7 @@ adds value over a pure model loop.
 
 ## Status
 
-The harness is not wired yet. The integration tests in
-`crates/nars-agent-runtime/tests/agent_loop.rs` and
-`crates/nars-server/tests/api.rs` cover the same mechanisms with scripted
-providers; a runner will consume these JSON files in Phase 8.
+The runner is implemented in `apps/nars-eval`; fixtures live in
+`evals/fixtures`. The current set has six tasks: rename, compile-error repair,
+plan ordering, tool-failure recovery, pause/resume, and approval denial.
+Reports are written outside the repository by default (`target/eval-report.json`).

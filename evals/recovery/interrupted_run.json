@@ -1,12 +1,47 @@
 {
   "id": "interrupted_run",
   "category": "recovery",
-  "prompt": "Inspect the repository and summarize the crate layout.",
-  "setup": {"fixture": "multi_crate"},
-  "limits": {"max_steps": 12, "max_model_calls": 10},
+  "goal_type": "investigate",
+  "prompt": "Inspect src/lib.rs and summarize it.",
+  "setup": {
+    "fixture": "rename_symbol"
+  },
+  "limits": {
+    "max_steps": 8,
+    "max_model_calls": 6
+  },
+  "pause_before_start": true,
+  "pause_ms": 100,
+  "script": [
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "investigate",
+        "target": "src/lib.rs",
+        "description": "Read the file"
+      },
+      "candidate_actions": [
+        {
+          "tool": "read_file",
+          "arguments": {
+            "path": "src/lib.rs"
+          },
+          "confidence": 0.9
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "final_answer",
+      "text": "src/lib.rs defines `alpha`.",
+      "success": true
+    }
+  ],
   "expect": {
-    "pause_after_step": 1,
-    "resume_completes": true,
+    "tools_used": [
+      "read_file"
+    ],
+    "run_status": "completed",
     "replay_hash_equal": true
   }
 }

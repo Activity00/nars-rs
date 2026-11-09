@@ -1,12 +1,103 @@
 {
   "id": "tool_failure_recovery",
   "category": "nars_tasks",
-  "prompt": "Read the target file. If the read fails, search for it instead and report the cause.",
-  "setup": {"fixture": "missing_then_present"},
-  "limits": {"max_steps": 10, "max_model_calls": 8},
+  "goal_type": "investigate",
+  "prompt": "Read src/missing.rs. If that fails, search for MARKER and read src/lib.rs instead.",
+  "setup": {
+    "fixture": "missing_then_present"
+  },
+  "limits": {
+    "max_steps": 8,
+    "max_model_calls": 8
+  },
+  "script": [
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "investigate",
+        "target": "src/missing.rs",
+        "description": "Try the requested file"
+      },
+      "candidate_actions": [
+        {
+          "tool": "read_file",
+          "arguments": {
+            "path": "src/missing.rs"
+          },
+          "confidence": 0.9
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "investigate",
+        "description": "Locate the marker after the read failure"
+      },
+      "candidate_actions": [
+        {
+          "tool": "search",
+          "arguments": {
+            "query": "alpha"
+          },
+          "confidence": 0.9
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "investigate",
+        "description": "List the workspace after the search"
+      },
+      "candidate_actions": [
+        {
+          "tool": "list_files",
+          "arguments": {
+            "path": "."
+          },
+          "confidence": 0.85
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "investigate",
+        "target": "src/lib.rs",
+        "description": "Read the discovered file"
+      },
+      "candidate_actions": [
+        {
+          "tool": "read_file",
+          "arguments": {
+            "path": "src/lib.rs"
+          },
+          "confidence": 0.95
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "final_answer",
+      "text": "src/missing.rs is absent; `alpha` was found in src/lib.rs.",
+      "success": true,
+      "artifacts": [
+        "src/lib.rs"
+      ]
+    }
+  ],
   "expect": {
-    "tools_used": ["read_file", "search"],
-    "min_nars_decisions": 2,
-    "fallback_allowed": true
+    "tools_used": [
+      "read_file",
+      "search",
+      "list_files"
+    ],
+    "min_nars_decisions": 4,
+    "run_status": "completed",
+    "replay_hash_equal": true
   }
 }

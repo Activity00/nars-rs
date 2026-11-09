@@ -9,6 +9,7 @@ members = [
     "crates/nars-session",
     "crates/nars-server",
     "apps/narsd",
+    "apps/nars-eval",
 ]
 resolver = "2"
 

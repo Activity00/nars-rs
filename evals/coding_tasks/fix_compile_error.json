@@ -1,12 +1,87 @@
 {
   "id": "fix_compile_error",
   "category": "coding_tasks",
-  "prompt": "The crate does not compile. Find the error, fix it, and run cargo test.",
-  "setup": {"fixture": "broken_crate"},
-  "limits": {"max_steps": 16, "max_model_calls": 12},
+  "goal_type": "modify_code",
+  "prompt": "The crate does not compile. Find the type error, fix it, and verify with cargo check.",
+  "setup": {
+    "fixture": "broken_crate"
+  },
+  "limits": {
+    "max_steps": 12,
+    "max_model_calls": 10
+  },
+  "script": [
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "modify_code",
+        "target": "src/lib.rs",
+        "description": "Fix the type error"
+      },
+      "candidate_actions": [
+        {
+          "tool": "read_file",
+          "arguments": {
+            "path": "src/lib.rs"
+          },
+          "confidence": 0.9
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "modify_code",
+        "target": "src/lib.rs",
+        "description": "Return an integer"
+      },
+      "candidate_actions": [
+        {
+          "tool": "apply_patch",
+          "arguments": {
+            "path": "src/lib.rs",
+            "old_text": "\"broken\"",
+            "new_text": "42"
+          },
+          "confidence": 0.95
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "modify_code",
+        "target": "src/lib.rs",
+        "description": "Verify the fix"
+      },
+      "candidate_actions": [
+        {
+          "tool": "cargo_check",
+          "arguments": {},
+          "confidence": 0.9
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "final_answer",
+      "text": "Fixed the type error and `cargo check` passed.",
+      "success": true
+    }
+  ],
   "expect": {
-    "final_answer_contains": ["test"],
-    "tools_used": ["cargo_check", "search", "apply_patch", "cargo_test"],
-    "approval_required": true
+    "files_modified": [
+      "src/lib.rs"
+    ],
+    "tools_used": [
+      "read_file",
+      "apply_patch",
+      "cargo_check"
+    ],
+    "approval_required": true,
+    "run_status": "completed",
+    "replay_hash_equal": true
   }
 }

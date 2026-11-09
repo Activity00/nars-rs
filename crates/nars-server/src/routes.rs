@@ -134,16 +134,15 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
         "provider": state.provider.name(),
         "model": state.config.actor.model,
         "approval_mode": state.config.approval_mode,
-        "tools": nars_tools::builtin::builtin_registry().manifests(),
+        "tools": state.tool_manifests(),
         "max_steps": state.config.max_steps,
         "time_ms": now_ms()
     }))
 }
 
 async fn tools(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let registry = nars_tools::builtin::builtin_registry();
     Json(json!({
-        "tools": registry.manifests(),
+        "tools": state.tool_manifests(),
         "approval_mode": state.config.approval_mode
     }))
 }

@@ -665,6 +665,24 @@ name = "nars-core"
 version = "0.1.0"
 
 [[package]]
+name = "nars-eval"
+version = "0.1.0"
+dependencies = [
+ "nars-agent-ir",
+ "nars-agent-runtime",
+ "nars-model",
+ "nars-session",
+ "nars-tools",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "walkdir",
+]
+
+[[package]]
 name = "nars-model"
 version = "0.1.0"
 dependencies = [

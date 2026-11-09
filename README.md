@@ -27,7 +27,9 @@ user message → model (Agent IR) → Rust validation → NARS goals/facts
   [0001](docs/decisions/0001-agent-architecture.md),
   [0002](docs/decisions/0002-agent-ir.md),
   [0003](docs/decisions/0003-tool-protocol.md),
-  [0004](docs/decisions/0004-task-plan.md)
+  [0004](docs/decisions/0004-task-plan.md),
+  [0005](docs/decisions/0005-mcp.md),
+  [0006](docs/decisions/0006-evaluation.md)
 - Architecture overview: [docs/architecture/overview.md](docs/architecture/overview.md)
 - Event protocol: [docs/protocol/events.md](docs/protocol/events.md)
 - 中文快速开始: [docs/agent/QUICKSTART_ZH.md](docs/agent/QUICKSTART_ZH.md)
@@ -48,6 +50,13 @@ cd web && npm install && npm run dev     # http://localhost:5173
 
 # 5. Or build the UI once and let narsd serve it at :8787
 cd web && npm run build && cd .. && cargo run -p narsd
+```
+
+Run the deterministic evaluation set (fixtures, scripted model, real runtime):
+
+```bash
+cargo run -p nars-eval -- --provider scripted \
+  --out target/eval-report.json --markdown-out target/eval-report.md
 ```
 
 The focused test suite for the agent stack:

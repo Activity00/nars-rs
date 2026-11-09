@@ -1,13 +1,124 @@
 {
   "id": "plan_order",
   "category": "nars_tasks",
+  "goal_type": "modify_code",
   "prompt": "Rename alpha to beta in src/lib.rs and verify the result.",
-  "setup": {"fixture": "rename_symbol"},
-  "limits": {"max_steps": 10, "max_model_calls": 10},
+  "setup": {
+    "fixture": "rename_symbol"
+  },
+  "limits": {
+    "max_steps": 10,
+    "max_model_calls": 10
+  },
+  "script": [
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "modify_code",
+        "target": "src/lib.rs",
+        "description": "Rename alpha to beta"
+      },
+      "candidate_actions": [
+        {
+          "tool": "apply_patch",
+          "arguments": {
+            "path": "src/lib.rs",
+            "old_text": "pub fn alpha() -> i32 {",
+            "new_text": "pub fn beta() -> i32 {"
+          },
+          "confidence": 0.99
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "modify_code",
+        "target": "src/lib.rs",
+        "description": "Rename alpha to beta"
+      },
+      "candidate_actions": [
+        {
+          "tool": "apply_patch",
+          "arguments": {
+            "path": "src/lib.rs",
+            "old_text": "pub fn alpha() -> i32 {",
+            "new_text": "pub fn beta() -> i32 {"
+          },
+          "confidence": 0.99
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "modify_code",
+        "target": "src/lib.rs",
+        "description": "Rename alpha to beta"
+      },
+      "candidate_actions": [
+        {
+          "tool": "apply_patch",
+          "arguments": {
+            "path": "src/lib.rs",
+            "old_text": "pub fn alpha() -> i32 {",
+            "new_text": "pub fn beta() -> i32 {"
+          },
+          "confidence": 0.95
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "final_answer",
+      "text": "Done.",
+      "success": true
+    },
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "modify_code",
+        "target": "src/lib.rs",
+        "description": "Verify the rename"
+      },
+      "candidate_actions": [
+        {
+          "tool": "cargo_check",
+          "arguments": {},
+          "confidence": 0.9
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "final_answer",
+      "text": "Renamed `alpha` to `beta` and verified with cargo check.",
+      "success": true
+    }
+  ],
   "expect": {
-    "ordered_tools": ["list_files", "read_file", "apply_patch", "cargo_check"],
-    "model_attempted_patch_first": true,
-    "plan_stages": ["investigate", "change", "verify", "answer"],
-    "final_status": "completed"
+    "ordered_tools": [
+      "list_files",
+      "read_file",
+      "apply_patch",
+      "cargo_check"
+    ],
+    "final_answer_contains": [
+      "beta"
+    ],
+    "files_modified": [
+      "src/lib.rs"
+    ],
+    "approval_required": true,
+    "plan_stages": [
+      "investigate",
+      "change",
+      "verify",
+      "answer"
+    ],
+    "run_status": "completed",
+    "replay_hash_equal": true
   }
 }
