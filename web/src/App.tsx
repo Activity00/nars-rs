@@ -3,11 +3,13 @@ import { api, eventStreamUrl, getToken, setToken } from "./api";
 import { initialState, reducer } from "./store";
 import type {
   CompareResponse,
+  MemorySummary,
   RunSummary,
   SessionMeta,
   ToolManifest,
 } from "./types";
 import { ComparePanel } from "./components/ComparePanel";
+import { MemoryPanel } from "./components/MemoryPanel";
 import { Composer } from "./components/Composer";
 import { Inspector } from "./components/Inspector";
 import { Sidebar } from "./components/Sidebar";
@@ -21,6 +23,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [comparing, setComparing] = useState(false);
   const [comparison, setComparison] = useState<CompareResponse>();
+  const [memory, setMemory] = useState<MemorySummary>();
+  const [memoryLoading, setMemoryLoading] = useState(false);
   const [token, setTokenValue] = useState(getToken());
 
   const selectedId = state.selected?.sessionId;
@@ -249,6 +253,18 @@ export default function App() {
     [selectedId, state.sessions],
   );
 
+  const openMemory = useCallback(async () => {
+    if (!selectedId) return;
+    setMemoryLoading(true);
+    try {
+      setMemory(await api.memory(selectedId));
+    } catch (error) {
+      dispatch({ type: "error", message: String(error) });
+    } finally {
+      setMemoryLoading(false);
+    }
+  }, [selectedId]);
+
   const control = useCallback(
     async (action: "pause" | "resume" | "cancel") => {
       if (!run) return;
@@ -319,6 +335,14 @@ export default function App() {
             )}
           </div>
           <div className="topbar-actions">
+            <button
+              className="btn ghost small"
+              disabled={!selectedId}
+              onClick={() => void openMemory()}
+              title="Inspect long-term memory for this workspace"
+            >
+              Memory
+            </button>
             {runOptions.length > 0 && (
               <label className="run-picker">
                 <span>Run</span>
@@ -406,6 +430,13 @@ export default function App() {
         comparing={comparing}
         onSelectRuns={(leftRun, rightRun) => void compare(leftRun, rightRun)}
         onClose={() => setComparison(undefined)}
+      />
+
+      <MemoryPanel
+        memory={memory}
+        loading={memoryLoading}
+        onRefresh={() => void openMemory()}
+        onClose={() => setMemory(undefined)}
       />
     </div>
   );

@@ -275,3 +275,29 @@ export interface AppState {
   globalError?: string;
   loadingSessions: boolean;
 }
+
+export interface MemoryConceptView {
+  term: string;
+  priority: number;
+  use_count: number;
+  frequency: number;
+  confidence: number;
+  implications: number;
+}
+
+export interface MemoryImplicationView {
+  from: string;
+  to: string;
+  frequency: number;
+  confidence: number;
+}
+
+export interface MemorySummary {
+  workspace: string;
+  available: boolean;
+  concept_count: number;
+  implication_count: number;
+  atom_count: number;
+  top_concepts: MemoryConceptView[];
+  top_implications: MemoryImplicationView[];
+}

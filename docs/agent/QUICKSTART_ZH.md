@@ -262,6 +262,8 @@ curl -X POST http://127.0.0.1:8787/api/sessions/<session_id>/resume
   （概念、信念、蕴含、原子表）：Run 启动时加载，结束时写回；
 - 记忆快照带 schema 版本和原子表；原子表与当前构建不兼容时拒绝加载，
   不会用错位的编号污染记忆；
+- `GET /api/sessions/<id>/memory` 返回该工作区记忆摘要（概念、蕴含、原子数），
+  Web UI 顶栏 **Memory** 按钮可查看；
 - 也可以使用 SQLite：`cargo run -p narsd -- --sqlite .nars-agent/sessions.db`；
 - 服务重启后会话仍在，工作区记忆也仍在；
 - 同一事件流重放得到相同 `state_hash`（集成测试覆盖）。

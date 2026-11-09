@@ -25,7 +25,8 @@ with selectable runs on both sides. Non-Rust projects verify through a
 policy-gated `run_command` and workspace verification discovery. Runs in the
 same session receive a bounded transcript of earlier completed turns, and each
 workspace keeps a durable NARS memory (concepts, beliefs, learned implications)
-that is loaded at run start and written back when a run finishes.
+that is loaded at run start and written back when a run finishes; the web UI
+can inspect it through the Memory panel.
 
 ```text
 user message → model (Agent IR) → Rust validation → NARS goals/facts

@@ -174,6 +174,32 @@ async fn memory_survives_runs_and_a_restart() {
         .map(|concept| concept.term.clone())
         .collect::<Vec<_>>();
 
+    let (status, view) = request(
+        &first.app,
+        Method::GET,
+        &format!("/api/sessions/{session}/memory"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(view["available"], true, "{view}");
+    assert!(
+        view["concept_count"].as_u64().unwrap_or(0) > 0,
+        "inspection should report concepts: {view}"
+    );
+    let top = view["top_concepts"].as_array().expect("top concepts");
+    assert!(!top.is_empty(), "{view}");
+    assert!(!top[0]["term"].as_str().unwrap_or_default().is_empty());
+
+    let (status, missing) = request(
+        &first.app,
+        Method::GET,
+        "/api/sessions/ses_00000000000000000000000000000000/memory",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{missing}");
+
     // Second process: a fresh AppState over the same directories, so nothing
     // survives in memory and the snapshot has to come from disk.
     let second = harness(store_dir.path(), memory_dir.path(), 1);

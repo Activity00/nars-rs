@@ -37,6 +37,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/sessions/{id}/messages", post(send_message))
         .route("/api/sessions/{id}/branch", post(branch_session))
         .route("/api/sessions/{id}/compare", get(compare_sessions))
+        .route("/api/sessions/{id}/memory", get(memory_summary))
         .route("/api/sessions/{id}/runs", get(list_runs))
         .route("/api/sessions/{id}/events", get(sse::session_events))
         .route("/api/sessions/{id}/replay", get(replay_session))
@@ -238,6 +239,14 @@ struct CompareQuery {
     left_run: Option<String>,
     #[serde(default)]
     right_run: Option<String>,
+}
+
+async fn memory_summary(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+) -> Result<Json<crate::memory_context::MemorySummary>, ApiError> {
+    let session_id = SessionId::from_static(session_id);
+    Ok(Json(state.memory_summary(&session_id)?))
 }
 
 async fn compare_sessions(

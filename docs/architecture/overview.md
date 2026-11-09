@@ -207,7 +207,8 @@ Run 历史不依赖进程内状态：`summarize_runs` 从事件日志投影 `Run
 usage。Run 开始时从快照恢复 Reasoner，结束时把更新后的记忆写回；同时从快照投影最多
 12 条概念写入 `TaskSpec.memory_brief`，以 `long_term_memory` 注入 prompt。
 
-记忆缺失时行为与以前一致（空记忆启动）。详见
+记忆缺失时行为与以前一致（空记忆启动）。`GET /api/sessions/{id}/memory`
+返回概念/蕴含摘要，Web UI 的 **Memory** 面板直接展示。详见
 [ADR 0012](../decisions/0012-long-term-memory.md)。
 
 ## 7.6 跨 Run 上下文

@@ -1,4 +1,4 @@
-import type { CompareResponse, RunSummary } from "./types";
+import type { CompareResponse, MemorySummary, RunSummary } from "./types";
 
 const TOKEN_KEY = "nars-agent-token";
 
@@ -77,6 +77,8 @@ export const api = {
       `/api/sessions/${sessionId}/compare?${params.toString()}`,
     );
   },
+  memory: (sessionId: string) =>
+    request<MemorySummary>(`/api/sessions/${sessionId}/memory`),
   branch: (sessionId: string, runId: string) =>
     request<{ session: any; run_id: string; copied_events: number }>(
       `/api/sessions/${sessionId}/branch`,

@@ -391,6 +391,34 @@ impl AppState {
         Ok((branch, new_run_id, copied))
     }
 
+    /// Long-term memory summary for the workspace a session belongs to.
+    ///
+    /// Missing or unreadable memory is reported as `available: false` rather
+    /// than failing the request, so the UI can show an empty state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session does not exist.
+    pub fn memory_summary(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<crate::memory_context::MemorySummary, ApiError> {
+        let meta = self
+            .store
+            .get_session(session_id)?
+            .ok_or_else(|| ApiError::NotFound(format!("session `{session_id}` does not exist")))?;
+        let snapshot = match &self.config.memory {
+            Some(store) => store
+                .load(&meta.workspace)
+                .map_err(|error| ApiError::Internal(error.to_string()))?,
+            None => None,
+        };
+        Ok(crate::memory_context::summary(
+            &meta.workspace,
+            snapshot.as_ref(),
+        ))
+    }
+
     /// Compares the newest run of a session with its parent/source run.
     ///
     /// # Errors

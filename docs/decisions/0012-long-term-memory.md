@@ -61,6 +61,14 @@ occurrence 时间索引）不保存。
 prompt 以 `long_term_memory` 数组呈现。system prompt 明确：这是先验知识，不是事实基准，
 可能变化的内容要先验证。
 
+### 5. 可检视
+
+`GET /api/sessions/{id}/memory` 返回该会话工作区的记忆摘要：概念数、蕴含数、
+原子数、优先级最高的概念（term、priority、usage、belief、蕴含数）和最强的
+若干条蕴含。Web UI 顶栏的 **Memory** 按钮直接展示这份数据。
+
+记忆不存在或无法解码时返回 `available: false`，而不是 404，便于 UI 展示空状态。
+
 ## 重放与分支
 
 - `memory_brief` 在 `RunStarted` 里，所以重放该 Run 不依赖当前记忆；
