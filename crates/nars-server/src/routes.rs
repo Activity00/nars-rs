@@ -30,6 +30,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/sessions/{id}", get(get_session))
         .route("/api/sessions/{id}/messages", post(send_message))
+        .route("/api/sessions/{id}/branch", post(branch_session))
         .route("/api/sessions/{id}/runs", get(list_runs))
         .route("/api/sessions/{id}/events", get(sse::session_events))
         .route("/api/sessions/{id}/replay", get(replay_session))
@@ -183,6 +184,30 @@ async fn get_session(
         .ok_or_else(|| ApiError::NotFound(format!("session `{session_id}` does not exist")))?;
     let runs = state.runs_for_session(&session_id);
     Ok(Json(json!({"session": meta, "runs": runs})))
+}
+
+#[derive(Debug, Deserialize)]
+struct BranchRequest {
+    run_id: String,
+}
+
+async fn branch_session(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+    Json(body): Json<BranchRequest>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let session_id = SessionId::from_static(session_id);
+    let source_run_id = RunId::from_static(body.run_id);
+    let (session, run_id, copied_events) = state.branch_session(&session_id, &source_run_id)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "session": session,
+            "run_id": run_id,
+            "source_run_id": source_run_id,
+            "copied_events": copied_events
+        })),
+    ))
 }
 
 #[derive(Debug, Deserialize)]

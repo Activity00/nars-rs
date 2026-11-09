@@ -8,9 +8,17 @@ interface Props {
   onPause: () => void;
   onResume: () => void;
   onCancel: () => void;
+  onBranch?: () => void;
 }
 
-export function Inspector({ run, busy, onPause, onResume, onCancel }: Props) {
+export function Inspector({
+  run,
+  busy,
+  onPause,
+  onResume,
+  onCancel,
+  onBranch,
+}: Props) {
   if (!run) {
     return (
       <aside className="inspector">
@@ -35,6 +43,7 @@ export function Inspector({ run, busy, onPause, onResume, onCancel }: Props) {
   const active = ["planning", "executing_tool", "awaiting_approval", "pending"].includes(
     run.status,
   );
+  const terminal = ["completed", "failed", "cancelled"].includes(run.status);
 
   return (
     <aside className="inspector">
@@ -192,6 +201,11 @@ export function Inspector({ run, busy, onPause, onResume, onCancel }: Props) {
         {run.status === "paused" && (
           <button className="btn primary" disabled={busy} onClick={onResume}>
             Resume
+          </button>
+        )}
+        {terminal && onBranch && (
+          <button className="btn ghost" disabled={busy} onClick={onBranch}>
+            Branch &amp; retry
           </button>
         )}
         {active || run.status === "paused" ? (

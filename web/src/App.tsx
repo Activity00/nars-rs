@@ -165,6 +165,20 @@ export default function App() {
     return active ? timeline.filter((item) => item.runId === active) : timeline;
   }, [state.selected]);
 
+  const branch = useCallback(async () => {
+    if (!selectedId || !run) return;
+    setBusy(true);
+    try {
+      const result = await api.branch(selectedId, run.id);
+      await refreshSessions();
+      dispatch({ type: "select", sessionId: result.session.session_id });
+    } catch (error) {
+      dispatch({ type: "error", message: String(error) });
+    } finally {
+      setBusy(false);
+    }
+  }, [selectedId, run, refreshSessions]);
+
   const control = useCallback(
     async (action: "pause" | "resume" | "cancel") => {
       if (!run) return;
@@ -279,6 +293,7 @@ export default function App() {
         onPause={() => void control("pause")}
         onResume={() => void control("resume")}
         onCancel={() => void control("cancel")}
+        onBranch={() => void branch()}
       />
     </div>
   );

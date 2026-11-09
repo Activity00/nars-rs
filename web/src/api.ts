@@ -57,6 +57,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ workspace, title }),
     }),
+  branch: (sessionId: string, runId: string) =>
+    request<{ session: any; run_id: string; copied_events: number }>(
+      `/api/sessions/${sessionId}/branch`,
+      { method: "POST", body: JSON.stringify({ run_id: runId }) },
+    ),
   sendMessage: (sessionId: string, text: string) =>
     request<{ run_id: string; session_id: string; status: string }>(
       `/api/sessions/${sessionId}/messages`,

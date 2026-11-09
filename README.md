@@ -31,7 +31,8 @@ user message → model (Agent IR) → Rust validation → NARS goals/facts
   [0003](docs/decisions/0003-tool-protocol.md),
   [0004](docs/decisions/0004-task-plan.md),
   [0005](docs/decisions/0005-mcp.md),
-  [0006](docs/decisions/0006-evaluation.md)
+  [0006](docs/decisions/0006-evaluation.md),
+  [0007](docs/decisions/0007-session-branching.md)
 - Architecture overview: [docs/architecture/overview.md](docs/architecture/overview.md)
 - Event protocol: [docs/protocol/events.md](docs/protocol/events.md)
 - 中文快速开始: [docs/agent/QUICKSTART_ZH.md](docs/agent/QUICKSTART_ZH.md)

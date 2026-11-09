@@ -557,3 +557,152 @@ async fn run_history_survives_a_restart() {
     assert_eq!(projected["run"]["status"], "completed");
     assert_eq!(projected["run"]["run_id"], first_run);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn branches_a_historical_run_into_a_new_session() {
+    let workspace = TempDir::new().unwrap();
+    let store_dir = TempDir::new().unwrap();
+    let config = ServerConfig {
+        provider_name: "scripted".to_owned(),
+        static_dir: None,
+        ..ServerConfig::default()
+    };
+    let store = Arc::new(FileSessionStore::new(store_dir.path()).unwrap());
+    let provider = Arc::new(ScriptedProvider::new(vec![
+        final_answer("first"),
+        final_answer("second"),
+    ]));
+    let app = build_router(AppState::new(
+        store.clone(),
+        provider as Arc<dyn ModelProvider>,
+        config.clone(),
+    ));
+    let (status, created) = request(
+        &app,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({"workspace": workspace.path().display().to_string(), "title": "parent"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let parent = created["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let mut parent_runs = Vec::new();
+    for text in ["first task", "second task"] {
+        let (status, sent) = request(
+            &app,
+            Method::POST,
+            &format!("/api/sessions/{parent}/messages"),
+            Some(json!({"text": text})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{sent}");
+        let run_id = sent["run_id"].as_str().unwrap().to_owned();
+        for _ in 0..200 {
+            let (_, body) = request(
+                &app,
+                Method::GET,
+                &format!("/api/runs/{run_id}"),
+                None,
+                None,
+            )
+            .await;
+            if body["run"]["status"] == "completed" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        parent_runs.push(run_id);
+    }
+    drop(app);
+
+    // Branch after a restart: the target run is no longer live.
+    let reopened = Arc::new(FileSessionStore::new(store_dir.path()).unwrap());
+    let provider = Arc::new(ScriptedProvider::new(vec![final_answer("branched")]));
+    let app = build_router(AppState::new(
+        reopened.clone(),
+        provider as Arc<dyn ModelProvider>,
+        config,
+    ));
+    let (status, branch) = request(
+        &app,
+        Method::POST,
+        &format!("/api/sessions/{parent}/branch"),
+        Some(json!({"run_id": parent_runs[1]})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{branch}");
+    let branch_session = branch["session"]["session_id"].as_str().unwrap().to_owned();
+    let branch_run = branch["run_id"].as_str().unwrap().to_owned();
+    assert_ne!(branch_session, parent);
+    assert!(branch["copied_events"].as_u64().unwrap() > 0, "{branch}");
+
+    for _ in 0..200 {
+        let (_, body) = request(
+            &app,
+            Method::GET,
+            &format!("/api/runs/{branch_run}"),
+            None,
+            None,
+        )
+        .await;
+        if body["run"]["status"] == "completed" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let (status, runs) = request(
+        &app,
+        Method::GET,
+        &format!("/api/sessions/{branch_session}/runs"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{runs}");
+    let summaries = runs["runs"].as_array().unwrap();
+    assert_eq!(summaries.len(), 2, "{runs}");
+    assert!(summaries.iter().any(|run| run["run_id"] == branch_run));
+    assert!(!summaries.iter().any(|run| run["run_id"] == parent_runs[1]));
+
+    let branch_events = reopened
+        .read_events(&SessionId::from_static(branch_session.clone()))
+        .unwrap();
+    let branch_run_ids = branch_events
+        .iter()
+        .filter_map(|envelope| envelope.event.run_id())
+        .collect::<Vec<_>>();
+    assert!(
+        !branch_run_ids
+            .iter()
+            .any(|id| id.as_str() == parent_runs[0])
+    );
+    assert!(branch_run_ids.iter().any(|id| id.as_str() == branch_run));
+    assert!(branch_events.iter().any(|envelope| matches!(
+        &envelope.event,
+        AgentEvent::RunStarted { session_id, .. } if session_id.as_str() == branch_session
+    )));
+    assert!(branch_events.iter().any(|envelope| matches!(
+        &envelope.event,
+        AgentEvent::UserMessage { run_id: Some(id), text, .. }
+            if id.as_str() == branch_run && text == "second task"
+    )));
+
+    let parent_events = reopened
+        .read_events(&SessionId::from_static(parent))
+        .unwrap();
+    assert!(parent_events.iter().any(|envelope| matches!(
+        &envelope.event,
+        AgentEvent::RunStarted { run_id, .. } if run_id.as_str() == parent_runs[0]
+    )));
+    assert!(parent_events.iter().any(|envelope| matches!(
+        &envelope.event,
+        AgentEvent::RunStarted { run_id, .. } if run_id.as_str() == parent_runs[1]
+    )));
+}

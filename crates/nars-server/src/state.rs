@@ -1,6 +1,6 @@
 //! Shared server state and the persistence sink attached to every run.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -170,11 +170,26 @@ impl AppState {
         message: &str,
         max_steps: Option<u32>,
     ) -> Result<RunId, ApiError> {
+        let task = TaskSpec {
+            goal: GoalSpec::new(
+                GoalType::Other,
+                message.chars().take(500).collect::<String>(),
+            ),
+            constraints: Vec::new(),
+            workspace: String::new(),
+            user_message: message.to_owned(),
+            max_steps: max_steps.unwrap_or(self.config.max_steps).clamp(1, 100),
+        };
+        self.start_task(session_id, task)
+    }
+
+    fn start_task(&self, session_id: &SessionId, mut task: TaskSpec) -> Result<RunId, ApiError> {
         let meta = self
             .store
             .get_session(session_id)?
             .ok_or_else(|| ApiError::NotFound(format!("session `{session_id}` does not exist")))?;
         let workspace = self.validate_workspace(&meta.workspace)?;
+        task.workspace = workspace.display().to_string();
         let policy = Policy::new(PolicyConfig {
             mode: self.config.approval_mode,
             ..PolicyConfig::default()
@@ -203,22 +218,12 @@ impl AppState {
             AgentEvent::UserMessage {
                 session_id: session_id.clone(),
                 run_id: Some(run_id.clone()),
-                text: message.to_owned(),
+                text: task.user_message.clone(),
             },
             now_ms(),
         )?;
         let _ = sender.send(user_event);
 
-        let task = TaskSpec {
-            goal: GoalSpec::new(
-                GoalType::Other,
-                message.chars().take(500).collect::<String>(),
-            ),
-            constraints: Vec::new(),
-            workspace: workspace.display().to_string(),
-            user_message: message.to_owned(),
-            max_steps: max_steps.unwrap_or(self.config.max_steps).clamp(1, 100),
-        };
         let runtime = AgentRuntime::new(
             Arc::clone(&self.provider),
             broker,
@@ -228,13 +233,125 @@ impl AppState {
                 retry: self.config.retry,
             },
         );
-        let handle =
-            Arc::new(runtime.start_with_run_id(session_id.clone(), task, run_id.clone())?);
+        let handle = Arc::new(runtime.start_with_run_id(
+            session_id.clone(),
+            task.clone(),
+            run_id.clone(),
+        )?);
         self.runs.lock().unwrap().insert(run_id.clone(), handle);
-        let title = message.lines().next().unwrap_or("agent run");
+        let title = task
+            .user_message
+            .lines()
+            .next()
+            .unwrap_or("agent run")
+            .to_owned();
         self.store
-            .touch_session(session_id, now_ms(), Some(title))?;
+            .touch_session(session_id, now_ms(), Some(&title))?;
         Ok(run_id)
+    }
+
+    /// Creates a new session that branches from the start of an existing run.
+    ///
+    /// Earlier runs are copied and their run identifiers are rewritten, so the
+    /// branch has no collision with the parent session. The selected run itself
+    /// is not copied; it is started again with its original task.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session or run is missing, the run is still
+    /// live, or the run has no terminal event.
+    pub fn branch_session(
+        &self,
+        session_id: &SessionId,
+        source_run_id: &RunId,
+    ) -> Result<(SessionMeta, RunId, usize), ApiError> {
+        let meta = self
+            .store
+            .get_session(session_id)?
+            .ok_or_else(|| ApiError::NotFound(format!("session `{session_id}` does not exist")))?;
+        let events = self.store.read_events(session_id)?;
+        let first_index = events
+            .iter()
+            .position(|envelope| envelope.event.run_id() == Some(source_run_id))
+            .ok_or_else(|| {
+                ApiError::NotFound(format!("run `{source_run_id}` does not exist in session"))
+            })?;
+        let started = events[..first_index]
+            .iter()
+            .find(|envelope| {
+                matches!(
+                    &envelope.event,
+                    AgentEvent::RunStarted { run_id, .. } if run_id == source_run_id
+                )
+            })
+            .or_else(|| {
+                events.iter().find(|envelope| {
+                    matches!(
+                        &envelope.event,
+                        AgentEvent::RunStarted { run_id, .. } if run_id == source_run_id
+                    )
+                })
+            })
+            .ok_or_else(|| {
+                ApiError::NotFound(format!("run `{source_run_id}` has no start event"))
+            })?;
+        let AgentEvent::RunStarted { task, .. } = &started.event else {
+            return Err(ApiError::Internal(
+                "run start event has the wrong type".to_owned(),
+            ));
+        };
+        let task = task.clone();
+        if let Some(run) = self.run(source_run_id)
+            && !run.state().status.is_terminal()
+        {
+            return Err(ApiError::Conflict(
+                "cannot branch from a live run".to_owned(),
+            ));
+        }
+        if self.run(source_run_id).is_none()
+            && !events.iter().any(|envelope| {
+                envelope.event.run_id() == Some(source_run_id)
+                    && match &envelope.event {
+                        AgentEvent::RunCompleted { .. }
+                        | AgentEvent::RunFailed { .. }
+                        | AgentEvent::RunCancelled { .. } => true,
+                        _ => false,
+                    }
+            })
+        {
+            return Err(ApiError::Conflict(
+                "run has no terminal event and cannot be branched".to_owned(),
+            ));
+        }
+
+        let prefix = &events[..first_index];
+        let mut mapping: BTreeMap<String, String> = BTreeMap::new();
+        for envelope in prefix {
+            if let Some(run_id) = envelope.event.run_id() {
+                mapping
+                    .entry(run_id.to_string())
+                    .or_insert_with(|| RunId::new().to_string());
+            }
+        }
+        let title = format!(
+            "Branch · {}",
+            meta.title.chars().take(48).collect::<String>()
+        );
+        let branch = self
+            .store
+            .create_session(&meta.workspace, &title, now_ms())?;
+        mapping.insert(session_id.to_string(), branch.session_id.to_string());
+        let mut copied = 0;
+        for envelope in prefix {
+            let event = rewrite_run_ids(&envelope.event, &mapping)?;
+            self.store
+                .append(&branch.session_id, event, envelope.timestamp_ms)?;
+            copied += 1;
+        }
+        let new_run_id = self.start_task(&branch.session_id, task)?;
+        self.store
+            .touch_session(&branch.session_id, now_ms(), Some(&title))?;
+        Ok((branch, new_run_id, copied))
     }
 
     /// Resumes the latest durable checkpoint of a session.
@@ -552,7 +669,39 @@ pub fn create_session(
 
 /// Current Unix time in milliseconds.
 #[must_use]
-pub fn now_ms() -> i64 {
+pub fn rewrite_run_ids(
+    event: &AgentEvent,
+    mapping: &BTreeMap<String, String>,
+) -> Result<AgentEvent, ApiError> {
+    let mut value = serde_json::to_value(event)
+        .map_err(|error| ApiError::Internal(format!("failed to encode event: {error}")))?;
+    rewrite_strings(&mut value, mapping);
+    serde_json::from_value(value)
+        .map_err(|error| ApiError::Internal(format!("failed to decode event: {error}")))
+}
+
+fn rewrite_strings(value: &mut serde_json::Value, mapping: &BTreeMap<String, String>) {
+    match value {
+        serde_json::Value::String(text) => {
+            if let Some(replacement) = mapping.get(text) {
+                *text = replacement.clone();
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                rewrite_strings(item, mapping);
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for item in fields.values_mut() {
+                rewrite_strings(item, mapping);
+            }
+        }
+        _ => {}
+    }
+}
+
+pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| {
