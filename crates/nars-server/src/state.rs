@@ -6,16 +6,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use nars_agent_ir::{
-    AgentEvent, GoalSpec, GoalType, RunId, RunState, RunStatus, SessionId, TaskSpec, ToolCallId,
-    ToolManifest,
+    AgentEvent, GoalSpec, GoalType, NarsFact, RunId, RunState, RunStatus, SessionId, TaskSpec,
+    ToolCallId, ToolManifest,
 };
 use nars_agent_runtime::{
     ActorConfig, AgentRuntime, PlannerSnapshot, RunHandle, RuntimeConfig, RuntimeSink,
 };
 use nars_model::ModelProvider;
 use nars_session::{
-    EventEnvelope, Experience, ExperienceStore, MemoryStore, RunSummary, SessionMeta,
-    SessionSnapshot, SessionStore, StoreError, summarize_runs,
+    EventEnvelope, Experience, ExperienceStore, MemoryStore, PROFILE_FACT_LIMIT, ProfileStore,
+    RunSummary, SessionMeta, SessionSnapshot, SessionStore, StoreError, StoredProfile,
+    summarize_runs,
 };
 use nars_tools::policy::{ApprovalMode, Policy, PolicyConfig};
 use nars_tools::{BrokerConfig, Sandbox, Tool, ToolBroker};
@@ -47,6 +48,8 @@ pub struct ServerConfig {
     pub experience: Option<Arc<dyn ExperienceStore>>,
     /// Optional workspace long-term memory store.
     pub memory: Option<Arc<dyn MemoryStore>>,
+    /// Optional cross-workspace profile store.
+    pub profile: Option<Arc<dyn ProfileStore>>,
     /// Additional tools, typically MCP adapters.
     pub extra_tools: Vec<Arc<dyn Tool>>,
 }
@@ -77,6 +80,7 @@ impl Default for ServerConfig {
             workspace_root: None,
             experience: None,
             memory: None,
+            profile: None,
             extra_tools: Vec::new(),
         }
     }
@@ -124,6 +128,67 @@ impl AppState {
             active_workspaces: Arc::new(Mutex::new(HashSet::new())),
             config,
         })
+    }
+
+    /// Facts from the cross-workspace profile, seeded into every new run.
+    fn load_profile_facts(&self) -> Vec<NarsFact> {
+        let Some(store) = &self.config.profile else {
+            return Vec::new();
+        };
+        match store.load() {
+            Ok(stored) => stored.map_or_else(Vec::new, |stored| stored.profile.facts),
+            Err(error) => {
+                tracing::warn!(%error, "failed to load profile memory");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Current profile contents, when profile memory is enabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the profile file cannot be read.
+    pub fn profile_snapshot(&self) -> Result<Option<StoredProfile>, ApiError> {
+        match &self.config.profile {
+            Some(store) => store
+                .load()
+                .map_err(|error| ApiError::Internal(error.to_string())),
+            None => Ok(None),
+        }
+    }
+
+    /// Adds one fact to the cross-workspace profile.
+    ///
+    /// Retries when another workspace commits concurrently, because profile
+    /// writes are optimistically guarded by a generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when profile memory is disabled, the file cannot be
+    /// read, or every retry lost the generation race.
+    pub fn add_profile_fact(&self, fact: NarsFact) -> Result<usize, ApiError> {
+        let Some(store) = &self.config.profile else {
+            return Err(ApiError::BadRequest(
+                "profile memory is not enabled".to_owned(),
+            ));
+        };
+        for _ in 0..3 {
+            let current = store
+                .load()
+                .map_err(|error| ApiError::Internal(error.to_string()))?;
+            let generation = current.as_ref().map(|stored| stored.generation);
+            let mut profile = current.map_or_else(Default::default, |stored| stored.profile);
+            profile.merge([fact.clone()], PROFILE_FACT_LIMIT);
+            match store.save(generation, &profile) {
+                Ok(_) => return Ok(profile.facts.len()),
+                Err(StoreError::Conflict(_)) => continue,
+                Err(error) => return Err(ApiError::Internal(error.to_string())),
+            }
+        }
+        Err(ApiError::Conflict(
+            "profile memory is being written concurrently".to_owned(),
+        ))
     }
 
     /// Marks a workspace as busy; returns `false` when a run already holds it.
@@ -248,6 +313,7 @@ impl AppState {
         if let Some(snapshot) = &memory {
             task.memory_brief = crate::memory_context::memory_brief(snapshot);
         }
+        let profile_facts = self.load_profile_facts();
         if !self.claim_workspace(&workspace_text) {
             return Err(ApiError::Conflict(format!(
                 "workspace `{workspace_text}` already has a running task"
@@ -256,12 +322,14 @@ impl AppState {
         let mut actor_config = self.config.actor.clone();
         actor_config.experience = experience;
         actor_config.initial_memory = memory;
+        actor_config.profile_facts = profile_facts;
         let sink = Arc::new(StoreSink::new(
             session_id.clone(),
             Arc::clone(&self.store),
             sender.clone(),
             self.config.experience.clone(),
             self.config.memory.clone(),
+            self.config.profile.clone(),
             memory_generation,
             Arc::clone(&self.active_workspaces),
             workspace_text.clone(),
@@ -591,6 +659,7 @@ impl AppState {
         });
         let memory_generation = stored.as_ref().map(|stored| stored.generation);
         let memory = stored.map(|stored| stored.snapshot);
+        let profile_facts = self.load_profile_facts();
         if !self.claim_workspace(&workspace_text) {
             return Err(ApiError::Conflict(format!(
                 "workspace `{workspace_text}` already has a running task"
@@ -599,12 +668,14 @@ impl AppState {
         let mut actor_config = self.config.actor.clone();
         actor_config.experience = experience;
         actor_config.initial_memory = memory;
+        actor_config.profile_facts = profile_facts;
         let sink = Arc::new(StoreSink::new(
             session_id.clone(),
             Arc::clone(&self.store),
             sender,
             self.config.experience.clone(),
             self.config.memory.clone(),
+            self.config.profile.clone(),
             memory_generation,
             Arc::clone(&self.active_workspaces),
             workspace_text.clone(),
@@ -756,6 +827,7 @@ pub struct StoreSink {
     last_seq: AtomicU64,
     experience: Option<Arc<dyn ExperienceStore>>,
     memory: Option<Arc<dyn MemoryStore>>,
+    profile: Option<Arc<dyn ProfileStore>>,
     memory_generation: Option<u64>,
     active_workspaces: Arc<Mutex<HashSet<String>>>,
     workspace: String,
@@ -772,6 +844,7 @@ impl StoreSink {
         sender: broadcast::Sender<EventEnvelope>,
         experience: Option<Arc<dyn ExperienceStore>>,
         memory: Option<Arc<dyn MemoryStore>>,
+        profile: Option<Arc<dyn ProfileStore>>,
         memory_generation: Option<u64>,
         active_workspaces: Arc<Mutex<HashSet<String>>>,
         workspace: String,
@@ -783,6 +856,7 @@ impl StoreSink {
             last_seq: AtomicU64::new(0),
             experience,
             memory,
+            profile,
             memory_generation,
             active_workspaces,
             workspace,
@@ -805,6 +879,39 @@ impl StoreSink {
             .lock()
             .unwrap()
             .remove(&self.workspace);
+        self.persist_profile(snapshot);
+    }
+
+    /// Promotes agent-level facts learned by this run into the shared profile.
+    fn persist_profile(&self, snapshot: &nars_core::MemorySnapshot) {
+        let Some(store) = &self.profile else {
+            return;
+        };
+        let facts = crate::memory_context::promote_facts(snapshot);
+        if facts.is_empty() {
+            return;
+        }
+        for _ in 0..3 {
+            let current = match store.load() {
+                Ok(current) => current,
+                Err(error) => {
+                    tracing::warn!(%error, "failed to load profile memory");
+                    return;
+                }
+            };
+            let generation = current.as_ref().map(|stored| stored.generation);
+            let mut profile = current.map_or_else(Default::default, |stored| stored.profile);
+            profile.merge(facts.iter().cloned(), PROFILE_FACT_LIMIT);
+            match store.save(generation, &profile) {
+                Ok(_) => return,
+                Err(StoreError::Conflict(_)) => continue,
+                Err(error) => {
+                    tracing::warn!(%error, "failed to save profile memory");
+                    return;
+                }
+            }
+        }
+        tracing::warn!("gave up promoting profile facts after repeated generation conflicts");
     }
 
     fn persist_experience(&self, state: &RunState, planner: &PlannerSnapshot) {

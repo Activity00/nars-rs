@@ -1,7 +1,8 @@
-import type { MemorySummary } from "../types";
+import type { MemorySummary, ProfileSummary } from "../types";
 
 interface Props {
   memory?: MemorySummary;
+  profile?: ProfileSummary;
   loading?: boolean;
   onRefresh: () => void;
   onClose: () => void;
@@ -11,7 +12,7 @@ function percent(value: number): string {
   return `${(value * 100).toFixed(0)}%`;
 }
 
-export function MemoryPanel({ memory, loading, onRefresh, onClose }: Props) {
+export function MemoryPanel({ memory, profile, loading, onRefresh, onClose }: Props) {
   if (!memory && !loading) return null;
   return (
     <div className="compare-overlay" onClick={onClose}>
@@ -29,6 +30,9 @@ export function MemoryPanel({ memory, loading, onRefresh, onClose }: Props) {
               <div className="muted small">
                 {memory.concept_count} concepts · {memory.implication_count} implications ·{" "}
                 {memory.atom_count} atoms
+                {profile?.available && profile.fact_count > 0
+                  ? ` · ${profile.fact_count} shared profile facts`
+                  : ""}
               </div>
             ) : (
               <div className="muted small">
@@ -79,6 +83,36 @@ export function MemoryPanel({ memory, loading, onRefresh, onClose }: Props) {
               Belief is frequency / confidence. Priority drives which concepts NARS looks at
               first.
             </div>
+          </section>
+        )}
+
+        {profile?.available && profile.facts.length > 0 && (
+          <section>
+            <h3>Shared profile</h3>
+            <div className="muted small">
+              Agent-level facts promoted across workspaces. They are seeded into every new
+              run as prior beliefs.
+            </div>
+            <table className="compare-table">
+              <thead>
+                <tr>
+                  <th>Term</th>
+                  <th>Truth</th>
+                </tr>
+              </thead>
+              <tbody>
+                {profile.facts.slice(0, 10).map((fact) => (
+                  <tr key={fact.term}>
+                    <td>
+                      <code>{fact.term}</code>
+                    </td>
+                    <td>
+                      {percent(fact.frequency)} / {percent(fact.confidence)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </section>
         )}
 

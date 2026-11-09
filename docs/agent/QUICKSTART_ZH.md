@@ -264,6 +264,9 @@ curl -X POST http://127.0.0.1:8787/api/sessions/<session_id>/resume
   不会用错位的编号污染记忆；
 - `GET /api/sessions/<id>/memory` 返回该工作区记忆摘要（概念、蕴含、原子数），
   Web UI 顶栏 **Memory** 按钮可查看；
+- `../memory/profile.json` 保存跨工作区 profile：代理级事实与用户偏好，
+  每个 Run 启动时注入，Run 结束自动提升 `tool_`/`step_`/`plan_` 等事实；
+  `POST /api/memory/profile/facts` 可写入自定义偏好；
 - 也可以使用 SQLite：`cargo run -p narsd -- --sqlite .nars-agent/sessions.db`；
 - 服务重启后会话仍在，工作区记忆也仍在；
 - 同一事件流重放得到相同 `state_hash`（集成测试覆盖）。

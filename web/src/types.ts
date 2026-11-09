@@ -301,3 +301,15 @@ export interface MemorySummary {
   top_concepts: MemoryConceptView[];
   top_implications: MemoryImplicationView[];
 }
+
+export interface ProfileFact {
+  term: string;
+  frequency: number;
+  confidence: number;
+}
+
+export interface ProfileSummary {
+  available: boolean;
+  fact_count: number;
+  facts: ProfileFact[];
+}

@@ -25,8 +25,10 @@ with selectable runs on both sides. Non-Rust projects verify through a
 policy-gated `run_command` and workspace verification discovery. Runs in the
 same session receive a bounded transcript of earlier completed turns, and each
 workspace keeps a durable NARS memory (concepts, beliefs, learned implications)
-that is loaded at run start and written back when a run finishes; the web UI
-can inspect it through the Memory panel.
+that is loaded at run start and written back when a run finishes. Agent-level
+facts (tool outcomes, plan progress, user preferences) are promoted into a
+cross-workspace profile and seeded into every run; the web UI can inspect both
+through the Memory panel.
 
 ```text
 user message → model (Agent IR) → Rust validation → NARS goals/facts
@@ -47,7 +49,8 @@ user message → model (Agent IR) → Rust validation → NARS goals/facts
   [0010](docs/decisions/0010-generic-verification.md),
   [0011](docs/decisions/0011-session-context.md),
   [0012](docs/decisions/0012-long-term-memory.md),
-  [0013](docs/decisions/0013-memory-maintenance.md)
+  [0013](docs/decisions/0013-memory-maintenance.md),
+  [0014](docs/decisions/0014-profile-memory.md)
 - Architecture overview: [docs/architecture/overview.md](docs/architecture/overview.md)
 - Event protocol: [docs/protocol/events.md](docs/protocol/events.md)
 - 中文快速开始: [docs/agent/QUICKSTART_ZH.md](docs/agent/QUICKSTART_ZH.md)

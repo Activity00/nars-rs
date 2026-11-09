@@ -4,6 +4,7 @@ import { initialState, reducer } from "./store";
 import type {
   CompareResponse,
   MemorySummary,
+  ProfileSummary,
   RunSummary,
   SessionMeta,
   ToolManifest,
@@ -24,6 +25,7 @@ export default function App() {
   const [comparing, setComparing] = useState(false);
   const [comparison, setComparison] = useState<CompareResponse>();
   const [memory, setMemory] = useState<MemorySummary>();
+  const [profile, setProfile] = useState<ProfileSummary>();
   const [memoryLoading, setMemoryLoading] = useState(false);
   const [token, setTokenValue] = useState(getToken());
 
@@ -257,7 +259,12 @@ export default function App() {
     if (!selectedId) return;
     setMemoryLoading(true);
     try {
-      setMemory(await api.memory(selectedId));
+      const [memoryView, profileView] = await Promise.all([
+        api.memory(selectedId),
+        api.profile(),
+      ]);
+      setMemory(memoryView);
+      setProfile(profileView);
     } catch (error) {
       dispatch({ type: "error", message: String(error) });
     } finally {
@@ -434,6 +441,7 @@ export default function App() {
 
       <MemoryPanel
         memory={memory}
+        profile={profile}
         loading={memoryLoading}
         onRefresh={() => void openMemory()}
         onClose={() => setMemory(undefined)}

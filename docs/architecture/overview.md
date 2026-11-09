@@ -213,8 +213,12 @@ usage。Run 开始时从快照恢复 Reasoner，结束时把更新后的记忆�
 同一工作区同时只允许一个 Run（占用时返回 409）；记忆文件带 `generation`，
 写回时校验，避免并发或外部写入被静默覆盖。每个 Run 启动时对继承记忆做一次
 衰减和清理（保留带蕴含的概念），原子表与构建不兼容时按名字迁移。
-详见 [ADR 0012](../decisions/0012-long-term-memory.md) 与
-[ADR 0013](../decisions/0013-memory-maintenance.md)。
+代理级事实（`tool_`、`step_`、`plan_` 等）会提升到跨工作区的 profile，
+每个 Run 启动时作为先验信念注入；`GET /api/memory/profile` 可查看，
+`POST /api/memory/profile/facts` 可写入用户偏好。详见
+[ADR 0012](../decisions/0012-long-term-memory.md)、
+[ADR 0013](../decisions/0013-memory-maintenance.md) 与
+[ADR 0014](../decisions/0014-profile-memory.md)。
 
 ## 7.6 跨 Run 上下文
 

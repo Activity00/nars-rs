@@ -9,7 +9,7 @@ use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use nars_agent_ir::{RunId, SessionId, ToolCallId};
+use nars_agent_ir::{NarsFact, RunId, SessionId, ToolCallId, TruthValue};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tower_http::cors::{Any, CorsLayer};
@@ -38,6 +38,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/sessions/{id}/branch", post(branch_session))
         .route("/api/sessions/{id}/compare", get(compare_sessions))
         .route("/api/sessions/{id}/memory", get(memory_summary))
+        .route("/api/memory/profile", get(profile_memory))
+        .route("/api/memory/profile/facts", post(add_profile_fact))
         .route("/api/sessions/{id}/runs", get(list_runs))
         .route("/api/sessions/{id}/events", get(sse::session_events))
         .route("/api/sessions/{id}/replay", get(replay_session))
@@ -239,6 +241,72 @@ struct CompareQuery {
     left_run: Option<String>,
     #[serde(default)]
     right_run: Option<String>,
+}
+
+async fn profile_memory(State(state): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> {
+    let Some(stored) = state.profile_snapshot()? else {
+        return Ok(Json(json!({
+            "available": false,
+            "fact_count": 0,
+            "facts": [],
+        })));
+    };
+    let facts = stored
+        .profile
+        .facts
+        .iter()
+        .take(20)
+        .map(|fact| {
+            json!({
+                "term": fact.term,
+                "frequency": fact.truth.frequency,
+                "confidence": fact.truth.confidence,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(json!({
+        "available": true,
+        "generation": stored.generation,
+        "fact_count": stored.profile.facts.len(),
+        "facts": facts,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct ProfileFactRequest {
+    term: String,
+    #[serde(default = "default_profile_frequency")]
+    frequency: f64,
+    #[serde(default = "default_profile_confidence")]
+    confidence: f64,
+}
+
+fn default_profile_frequency() -> f64 {
+    1.0
+}
+
+fn default_profile_confidence() -> f64 {
+    0.9
+}
+
+async fn add_profile_fact(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<ProfileFactRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let term = body.term.trim();
+    if term.is_empty() {
+        return Err(ApiError::BadRequest("term must not be empty".to_owned()));
+    }
+    let fact = NarsFact {
+        term: term.to_owned(),
+        truth: TruthValue {
+            frequency: body.frequency.clamp(0.0, 1.0),
+            confidence: body.confidence.clamp(0.0, 1.0),
+        },
+        eternal: true,
+    };
+    let count = state.add_profile_fact(fact)?;
+    Ok(Json(json!({ "fact_count": count })))
 }
 
 async fn memory_summary(

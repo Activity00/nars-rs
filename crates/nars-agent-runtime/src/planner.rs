@@ -357,6 +357,20 @@ impl NarsPlanner {
         Ok(())
     }
 
+    /// Commits cross-workspace profile facts as prior beliefs.
+    ///
+    /// Terms this build cannot parse are skipped instead of failing the run:
+    /// the profile is advisory knowledge, not part of the task.
+    pub fn seed_profile_facts(&mut self, facts: &[NarsFact]) -> usize {
+        let mut seeded = 0;
+        for fact in facts {
+            if self.commit_fact(fact).is_ok() {
+                seeded += 1;
+            }
+        }
+        seeded
+    }
+
     /// Ages inherited memory once per run and drops stale concepts.
     pub fn maintain_memory(&mut self) {
         self.reasoner.maintain_memory();

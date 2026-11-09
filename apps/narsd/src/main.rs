@@ -10,7 +10,8 @@ use nars_agent_runtime::ActorConfig;
 use nars_model::from_env;
 use nars_server::{AppState, ServerConfig, build_router};
 use nars_session::{
-    FileExperienceStore, FileMemoryStore, FileSessionStore, SessionStore, SqliteSessionStore,
+    FileExperienceStore, FileMemoryStore, FileProfileStore, FileSessionStore, SessionStore,
+    SqliteSessionStore,
 };
 use nars_tools::mcp::{McpServerConfig, connect, parse_servers};
 use nars_tools::policy::ApprovalMode;
@@ -92,7 +93,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         || PathBuf::from(".nars-agent/memory"),
         |parent| parent.join("memory"),
     );
-    let memory = Arc::new(FileMemoryStore::new(memory_root)?);
+    let memory = Arc::new(FileMemoryStore::new(memory_root.clone())?);
+    let profile = Arc::new(FileProfileStore::new(memory_root)?);
     let mut config = ServerConfig {
         provider_name: provider_name.clone(),
         token: args.token,
@@ -105,6 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         workspace_root: args.workspace_root,
         experience: Some(experience),
         memory: Some(memory),
+        profile: Some(profile),
         extra_tools,
         ..ServerConfig::default()
     };

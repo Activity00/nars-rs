@@ -11,7 +11,9 @@ use nars_agent_ir::{AgentIr, CandidateAction, FinalAnswer, GoalSpec, GoalType, T
 use nars_agent_runtime::ActorConfig;
 use nars_model::{ModelProvider, ScriptedProvider};
 use nars_server::{AppState, ServerConfig, build_router};
-use nars_session::{FileMemoryStore, FileSessionStore, MemoryStore, SessionStore};
+use nars_session::{
+    FileMemoryStore, FileProfileStore, FileSessionStore, MemoryStore, ProfileStore, SessionStore,
+};
 use nars_tools::policy::ApprovalMode;
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -26,6 +28,7 @@ struct Harness {
 fn harness(store_dir: &Path, memory_dir: &Path, rounds: usize) -> Harness {
     let store = Arc::new(FileSessionStore::new(store_dir).unwrap());
     let memory = Arc::new(FileMemoryStore::new(memory_dir).unwrap());
+    let profile = Arc::new(FileProfileStore::new(memory_dir).unwrap());
     let mut scripts = Vec::new();
     for round in 0..rounds {
         scripts.push(proposal());
@@ -50,6 +53,7 @@ fn harness(store_dir: &Path, memory_dir: &Path, rounds: usize) -> Harness {
             ..ActorConfig::default()
         },
         memory: Some(Arc::clone(&memory) as Arc<dyn MemoryStore>),
+        profile: Some(Arc::clone(&profile) as Arc<dyn ProfileStore>),
         ..ServerConfig::default()
     };
     let state = AppState::new(
@@ -255,4 +259,63 @@ async fn busy_workspace_rejects_a_second_run() {
 
     harness.state.release_workspace(&key);
     run_message(&harness.app, &session, "now it can run").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn profile_facts_are_shared_between_workspaces() {
+    let store_dir = TempDir::new().unwrap();
+    let memory_dir = TempDir::new().unwrap();
+    let harness = harness(store_dir.path(), memory_dir.path(), 2);
+
+    // A fact the user states once should reach every workspace.
+    let (status, body) = request(
+        &harness.app,
+        Method::POST,
+        "/api/memory/profile/facts",
+        Some(json!({"term": "user_prefers_pnpm", "confidence": 0.95})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let first_workspace = TempDir::new().unwrap();
+    let session = create_session(&harness.app, first_workspace.path()).await;
+    run_message(&harness.app, &session, "inspect the first repository").await;
+    let first_memory = wait_for_memory(&harness.memory, first_workspace.path()).await;
+    assert!(
+        first_memory
+            .language
+            .atoms
+            .iter()
+            .any(|atom| atom == "user_prefers_pnpm"),
+        "profile fact should be seeded into the workspace"
+    );
+
+    let (status, profile) = request(&harness.app, Method::GET, "/api/memory/profile", None).await;
+    assert_eq!(status, StatusCode::OK, "{profile}");
+    let facts = profile["facts"].as_array().expect("facts");
+    assert!(
+        facts.iter().any(|fact| fact["term"] == "user_prefers_pnpm"),
+        "{profile}"
+    );
+    assert!(
+        facts.iter().any(|fact| fact["term"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("tool_")),
+        "agent facts from the run should be promoted: {profile}"
+    );
+
+    // A different workspace gets the same profile.
+    let second_workspace = TempDir::new().unwrap();
+    let session = create_session(&harness.app, second_workspace.path()).await;
+    run_message(&harness.app, &session, "inspect the second repository").await;
+    let second_memory = wait_for_memory(&harness.memory, second_workspace.path()).await;
+    assert!(
+        second_memory
+            .language
+            .atoms
+            .iter()
+            .any(|atom| atom == "user_prefers_pnpm"),
+        "the second workspace should receive the shared profile"
+    );
 }

@@ -39,6 +39,8 @@ pub struct ActorConfig {
     pub experience: Option<nars_session::Experience>,
     /// Long-term memory to continue from, when the workspace has a snapshot.
     pub initial_memory: Option<MemorySnapshot>,
+    /// Cross-workspace facts seeded as prior beliefs.
+    pub profile_facts: Vec<nars_agent_ir::NarsFact>,
 }
 
 impl std::fmt::Debug for ActorConfig {
@@ -64,6 +66,7 @@ impl Default for ActorConfig {
             clock: Arc::new(system_now_ms),
             experience: None,
             initial_memory: None,
+            profile_facts: Vec::new(),
         }
     }
 }
@@ -195,7 +198,7 @@ impl SessionActor {
             .iter()
             .map(|manifest| manifest.name.clone())
             .collect::<Vec<_>>();
-        let planner = match config.initial_memory.as_ref() {
+        let mut planner = match config.initial_memory.as_ref() {
             Some(snapshot) => NarsPlanner::new_with_snapshot(
                 run_key,
                 tool_names,
@@ -210,6 +213,10 @@ impl SessionActor {
                 config.experience.as_ref(),
             )?,
         };
+        if !config.profile_facts.is_empty() {
+            let seeded = planner.seed_profile_facts(&config.profile_facts);
+            tracing::debug!(seeded, "seeded cross-workspace profile facts");
+        }
         let now = (config.clock)();
         let mut state = RunState::new(run_id, session_id, task.clone(), now);
         state.status = RunStatus::Planning;
@@ -270,7 +277,7 @@ impl SessionActor {
             .iter()
             .map(|manifest| manifest.name.clone())
             .collect::<Vec<_>>();
-        let planner = match config.initial_memory.as_ref() {
+        let mut planner = match config.initial_memory.as_ref() {
             Some(memory) => NarsPlanner::restore_with_memory(
                 planner_snapshot,
                 memory,
@@ -279,6 +286,9 @@ impl SessionActor {
             )?,
             None => NarsPlanner::restore(planner_snapshot, tool_names)?,
         };
+        if !config.profile_facts.is_empty() {
+            planner.seed_profile_facts(&config.profile_facts);
+        }
         let system_prompt = prompt::system_prompt(&manifests);
         let repair_attempts = config.repair_attempts;
         let task_committed = planner_snapshot.task_goal.is_some();

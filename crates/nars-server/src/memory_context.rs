@@ -1,10 +1,17 @@
 //! Turns a stored memory snapshot into a compact prompt brief.
 
+use nars_agent_ir::{NarsFact, TruthValue};
 use nars_core::{ConceptRecord, MemorySnapshot, Narsese, decode_term};
 use serde::Serialize;
 
 /// Maximum number of concepts summarized for the model.
 pub const MAX_BRIEF_CONCEPTS: usize = 12;
+/// Term prefixes that mark agent-level knowledge rather than repository facts.
+///
+/// These describe how tools and plan stages behave, so they stay useful in any
+/// workspace. Repository terms (files, symbols, goals) never match.
+pub const AGENT_TERM_PREFIXES: [&str; 6] = ["tool_", "step_", "plan_", "op_", "approval_", "run_"];
+
 /// Maximum number of concepts returned by the memory inspection endpoint.
 pub const MAX_INSPECT_CONCEPTS: usize = 20;
 /// Maximum number of implications returned by the memory inspection endpoint.
@@ -71,6 +78,48 @@ impl MemorySummary {
             top_implications: Vec::new(),
         }
     }
+}
+
+/// Selects agent-level beliefs that are worth sharing across workspaces.
+///
+/// Only atomic terms with an agent vocabulary prefix are promoted: they encode
+/// how the agent itself behaves (tool outcomes, plan progress) rather than
+/// facts about one repository.
+#[must_use]
+pub fn promote_facts(snapshot: &MemorySnapshot) -> Vec<NarsFact> {
+    let Ok(language) = Narsese::from_language_record(&snapshot.language) else {
+        return Vec::new();
+    };
+    let mut facts = Vec::new();
+    for concept in &snapshot.concepts {
+        if concept.belief.confidence <= 0.0 {
+            continue;
+        }
+        let Ok(term) = decode_term(&concept.term) else {
+            continue;
+        };
+        let rendered = language.format_term(&term);
+        if !is_agent_term(&rendered) {
+            continue;
+        }
+        facts.push(NarsFact {
+            term: rendered,
+            truth: TruthValue {
+                frequency: concept.belief.frequency,
+                confidence: concept.belief.confidence,
+            },
+            eternal: concept.belief.occurrence_time < 0,
+        });
+    }
+    facts
+}
+
+fn is_agent_term(term: &str) -> bool {
+    !term.contains(' ')
+        && !term.contains('(')
+        && AGENT_TERM_PREFIXES
+            .iter()
+            .any(|prefix| term.starts_with(prefix))
 }
 
 /// Builds the inspection view from a stored snapshot.
@@ -237,6 +286,25 @@ mod tests {
         let language = Narsese::new();
         let memory = Memory::default();
         assert!(memory_brief(&memory.to_snapshot(&language)).is_empty());
+    }
+
+    #[test]
+    fn promotes_only_agent_vocabulary_facts() {
+        let mut language = Narsese::new();
+        let mut memory = Memory::default();
+        let mut events = EventFactory::new();
+        for name in ["tool_read_file_observed_success", "cat"] {
+            let term = language.atomic_term(name).unwrap();
+            let event = events.input_event(term, EventType::Belief, Truth::new(1.0, 0.9), 0.0, 0);
+            assert!(memory.add_input_event(&language, event, 0));
+            let id = memory.conceptualize(&language, term, 1).unwrap();
+            memory.by_id_mut(id).unwrap().belief = event;
+        }
+
+        let facts = promote_facts(&memory.to_snapshot(&language));
+        assert_eq!(facts.len(), 1, "{facts:?}");
+        assert_eq!(facts[0].term, "tool_read_file_observed_success");
+        assert!(facts[0].truth.confidence > 0.0);
     }
 
     #[test]
