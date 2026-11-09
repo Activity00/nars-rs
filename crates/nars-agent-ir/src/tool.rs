@@ -482,6 +482,9 @@ pub enum DecisionSource {
     Nars,
     /// Deterministic fallback when NARS produced no candidate.
     Fallback,
+    /// Baseline mode: the highest pre-scored candidate was taken without
+    /// running NARS inference. Only used for evaluation comparisons.
+    Baseline,
     /// No action was available.
     None,
 }

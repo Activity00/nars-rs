@@ -109,6 +109,16 @@ struct Captured {
 type ArgumentIndex = HashMap<(String, Term), String>;
 
 /// The NARS decision kernel.
+/// How the planner turns scored candidates into a decision.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SelectionMode {
+    /// Run NARS goal inference over the seeded candidates.
+    #[default]
+    Nars,
+    /// Take the highest pre-scored candidate, bypassing NARS. Evaluation only.
+    Baseline,
+}
+
 pub struct NarsPlanner {
     reasoner: Reasoner,
     capture: Arc<Mutex<Option<Captured>>>,
@@ -122,6 +132,7 @@ pub struct NarsPlanner {
     run_key: String,
     seed: u64,
     decision_count: u32,
+    selection: SelectionMode,
 }
 
 const MAX_FACT_LOG: usize = 512;
@@ -255,6 +266,7 @@ impl NarsPlanner {
             run_key: run_key.into(),
             seed,
             decision_count: 0,
+            selection: SelectionMode::Nars,
         })
     }
 
@@ -355,6 +367,11 @@ impl NarsPlanner {
         }
         self.task_goal_type = snapshot.task_goal_type;
         Ok(())
+    }
+
+    /// Switches between NARS inference and the evaluation baseline.
+    pub fn set_selection_mode(&mut self, selection: SelectionMode) {
+        self.selection = selection;
     }
 
     /// Commits cross-workspace profile facts as prior beliefs.
@@ -502,6 +519,30 @@ impl NarsPlanner {
                 .total_cmp(&left.score)
                 .then_with(|| left.candidate_id.cmp(&right.candidate_id))
         });
+
+        if self.selection == SelectionMode::Baseline {
+            let selected = scored.first().and_then(|top| {
+                indexed
+                    .iter()
+                    .find(|(id, _, _)| id == &top.candidate_id)
+                    .map(|(_, action, _)| SelectedAction {
+                        candidate_id: top.candidate_id.clone(),
+                        tool: top.tool.clone(),
+                        arguments: action.arguments.clone(),
+                        score: top.score,
+                    })
+            });
+            return Ok(NarsDecision {
+                step,
+                selected,
+                scored,
+                rationale: "baseline: highest pre-scored candidate, NARS inference bypassed"
+                    .to_owned(),
+                goal_term,
+                source: DecisionSource::Baseline,
+                plan: None,
+            });
+        }
 
         let mut seeded = Vec::new();
         for (rank, (candidate_id, candidate, _)) in indexed.iter().enumerate() {
@@ -981,6 +1022,27 @@ mod tests {
         let decision = planner.decide(1, &[]).unwrap();
         assert!(decision.selected.is_none());
         assert_eq!(decision.source, DecisionSource::None);
+    }
+
+    #[test]
+    fn baseline_mode_takes_the_top_scored_candidate() {
+        let mut planner = planner();
+        planner.commit_task(&task(), 0.8).unwrap();
+        planner.set_selection_mode(SelectionMode::Baseline);
+        let candidates = vec![
+            CandidateAction::new("read_file")
+                .with_arguments(json!({"path": "src/lib.rs"}))
+                .with_confidence(0.4),
+            CandidateAction::new("search")
+                .with_arguments(json!({"query": "parser"}))
+                .with_confidence(0.95),
+        ];
+        let decision = planner.decide(1, &candidates).unwrap();
+        assert_eq!(decision.source, DecisionSource::Baseline, "{decision:?}");
+        assert_eq!(
+            decision.selected.as_ref().unwrap().candidate_id,
+            decision.scored[0].candidate_id
+        );
     }
 
     #[test]

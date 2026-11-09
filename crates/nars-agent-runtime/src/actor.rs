@@ -15,7 +15,7 @@ use nars_model::{ModelMessage, ModelRequest, agent_ir_schema};
 use nars_tools::{ToolBroker, build_call};
 
 use crate::plan::TaskPlan;
-use crate::planner::{NarsPlanner, PlannerSnapshot};
+use crate::planner::{NarsPlanner, PlannerSnapshot, SelectionMode};
 use crate::prompt;
 
 /// Model and runtime settings for one actor.
@@ -41,6 +41,8 @@ pub struct ActorConfig {
     pub initial_memory: Option<MemorySnapshot>,
     /// Cross-workspace facts seeded as prior beliefs.
     pub profile_facts: Vec<nars_agent_ir::NarsFact>,
+    /// Decision mode; `Baseline` is only used by evaluation.
+    pub selection: SelectionMode,
 }
 
 impl std::fmt::Debug for ActorConfig {
@@ -67,6 +69,7 @@ impl Default for ActorConfig {
             experience: None,
             initial_memory: None,
             profile_facts: Vec::new(),
+            selection: SelectionMode::Nars,
         }
     }
 }
@@ -213,6 +216,7 @@ impl SessionActor {
                 config.experience.as_ref(),
             )?,
         };
+        planner.set_selection_mode(config.selection);
         if !config.profile_facts.is_empty() {
             let seeded = planner.seed_profile_facts(&config.profile_facts);
             tracing::debug!(seeded, "seeded cross-workspace profile facts");
@@ -286,6 +290,7 @@ impl SessionActor {
             )?,
             None => NarsPlanner::restore(planner_snapshot, tool_names)?,
         };
+        planner.set_selection_mode(config.selection);
         if !config.profile_facts.is_empty() {
             planner.seed_profile_facts(&config.profile_facts);
         }

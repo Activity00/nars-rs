@@ -13,7 +13,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use nars_agent_ir::{AgentEvent, AgentIr, GoalSpec, GoalType, RunState, SessionId, TaskSpec};
-use nars_agent_runtime::{ActorConfig, AgentRuntime, RuntimeConfig, RuntimeSink, project};
+use nars_agent_runtime::{
+    ActorConfig, AgentRuntime, RuntimeConfig, RuntimeSink, SelectionMode, project,
+};
 use nars_model::{DemoProvider, ModelProvider, ScriptedProvider, from_env};
 use nars_session::EventEnvelope;
 use nars_tools::ToolBroker;
@@ -131,6 +133,21 @@ pub struct TaskMetrics {
     pub decisions: u32,
     /// Decisions produced by fallback rather than NARS inference.
     pub fallbacks: u32,
+    /// Fraction of decisions where NARS picked a candidate other than the
+    /// highest pre-scored one. Zero means NARS never changed the outcome.
+    pub override_rate: f64,
+    /// Status of the same task under the model-top baseline (scripted only).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub baseline_status: String,
+    /// Steps taken by the baseline run.
+    #[serde(default)]
+    pub baseline_steps: u32,
+    /// Tools called by the baseline run.
+    #[serde(default)]
+    pub baseline_tools: Vec<String>,
+    /// Model calls made by the baseline run.
+    #[serde(default)]
+    pub baseline_model_calls: u32,
     /// Approval requests observed.
     pub approvals: u32,
     /// Observations recorded.
@@ -199,24 +216,47 @@ impl Report {
     /// Renders a Markdown summary.
     #[must_use]
     pub fn markdown(&self) -> String {
+        let baseline_passed = self
+            .tasks
+            .iter()
+            .filter(|task| task.metrics.baseline_status == "passed")
+            .count();
+        let baseline_total = self
+            .tasks
+            .iter()
+            .filter(|task| !task.metrics.baseline_status.is_empty())
+            .count();
         let mut output = format!(
             "# nars-agent evaluation report\n\nProvider: `{}`\n\n\
-             Passed: **{}** · Failed: **{}** · Skipped: **{}** · Duration: {:.2}s\n\n\
-             | Task | Status | Tools | Decisions | Model calls | Approvals | Replay |\n\
-             |---|---|---:|---:|---:|---:|---|\n",
+             Passed: **{}** · Failed: **{}** · Skipped: **{}** · Baseline (model-top): **{} / {}** · Duration: {:.2}s\n\n\
+             | Task | Status | Tools | Decisions | NARS override | Baseline | Model calls | Approvals | Replay |\n\
+             |---|---|---:|---:|---:|---|---:|---:|---|\n",
             self.provider,
             self.passed,
             self.failed,
             self.skipped,
+            baseline_passed,
+            baseline_total,
             self.duration_ms as f64 / 1_000.0
         );
         for task in &self.tasks {
+            let baseline = if task.metrics.baseline_status.is_empty() {
+                "—".to_owned()
+            } else {
+                format!(
+                    "{} · {} tools",
+                    task.metrics.baseline_status,
+                    task.metrics.baseline_tools.len()
+                )
+            };
             output.push_str(&format!(
-                "| `{}` | {} | {} | {} | {} | {} | {} |\n",
+                "| `{}` | {} | {} | {} | {:.0}% | {} | {} | {} | {} |\n",
                 task.id,
                 task.status,
                 task.metrics.tools.len(),
                 task.metrics.decisions,
+                task.metrics.override_rate * 100.0,
+                baseline,
                 task.metrics.model_calls,
                 task.metrics.approvals,
                 if task.metrics.replay_hash_equal {
@@ -292,7 +332,7 @@ pub async fn run_all(
     let tasks = load_tasks(tasks_dir)?;
     let mut results = Vec::with_capacity(tasks.len());
     for task in &tasks {
-        let result = match run_task(task, fixtures_dir, provider, timeout).await {
+        let mut result = match run_task(task, fixtures_dir, provider, timeout).await {
             Ok(result) => result,
             Err(error) => TaskResult {
                 id: task.id.clone(),
@@ -303,6 +343,23 @@ pub async fn run_all(
                 metrics: TaskMetrics::default(),
             },
         };
+        if provider == ProviderChoice::Scripted && result.status != "skipped" {
+            if let Ok(baseline) = run_task_with(
+                task,
+                fixtures_dir,
+                provider,
+                timeout,
+                SelectionMode::Baseline,
+            )
+            .await
+            {
+                // Task-level verdict, comparable with the NARS row.
+                result.metrics.baseline_status = baseline.status;
+                result.metrics.baseline_steps = baseline.metrics.steps;
+                result.metrics.baseline_tools = baseline.metrics.tools;
+                result.metrics.baseline_model_calls = baseline.metrics.model_calls;
+            }
+        }
         results.push(result);
     }
     let passed = results
@@ -343,6 +400,23 @@ pub async fn run_task(
     fixtures_dir: &Path,
     provider_choice: ProviderChoice,
     timeout: Duration,
+) -> Result<TaskResult, EvalError> {
+    run_task_with(
+        task,
+        fixtures_dir,
+        provider_choice,
+        timeout,
+        SelectionMode::Nars,
+    )
+    .await
+}
+
+async fn run_task_with(
+    task: &TaskDefinition,
+    fixtures_dir: &Path,
+    provider_choice: ProviderChoice,
+    timeout: Duration,
+    selection: SelectionMode,
 ) -> Result<TaskResult, EvalError> {
     if provider_choice == ProviderChoice::Scripted && task.script.is_empty() {
         return Ok(TaskResult {
@@ -387,6 +461,7 @@ pub async fn run_task(
             actor: ActorConfig {
                 model: model_name,
                 seed: 7,
+                selection,
                 ..ActorConfig::default()
             },
             ..RuntimeConfig::default()
@@ -457,6 +532,25 @@ pub async fn run_task(
         .iter()
         .filter(|decision| decision.source == nars_agent_ir::DecisionSource::Fallback)
         .count();
+    let overrides = state
+        .decisions
+        .iter()
+        .filter(|decision| {
+            let Some(selected) = decision.selected.as_ref() else {
+                return false;
+            };
+            decision
+                .scored
+                .first()
+                .is_some_and(|top| top.candidate_id != selected.candidate_id)
+        })
+        .count();
+    let override_rate = if decisions == 0 {
+        0.0
+    } else {
+        f64::from(u32::try_from(overrides).unwrap_or(u32::MAX))
+            / f64::from(u32::try_from(decisions).unwrap_or(u32::MAX))
+    };
     let tools = state
         .tool_calls
         .iter()
@@ -490,6 +584,11 @@ pub async fn run_task(
         tools,
         decisions: u32::try_from(decisions).unwrap_or(u32::MAX),
         fallbacks: u32::try_from(fallbacks).unwrap_or(u32::MAX),
+        override_rate,
+        baseline_status: String::new(),
+        baseline_steps: 0,
+        baseline_tools: Vec::new(),
+        baseline_model_calls: 0,
         approvals: u32::try_from(approvals).unwrap_or(u32::MAX),
         observations: u32::try_from(state.observations.len()).unwrap_or(u32::MAX),
         replay_hash_equal,
