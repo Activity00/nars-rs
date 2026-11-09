@@ -374,6 +374,8 @@ impl AppState {
         &self,
         left: &SessionId,
         right: &SessionId,
+        left_run: Option<&RunId>,
+        right_run: Option<&RunId>,
     ) -> Result<CompareResponse, ApiError> {
         if left == right {
             return Err(ApiError::BadRequest(
@@ -390,7 +392,26 @@ impl AppState {
             .ok_or_else(|| ApiError::NotFound(format!("session `{right}` does not exist")))?;
         let left_events = self.store.read_events(left)?;
         let right_events = self.store.read_events(right)?;
-        build_comparison(&left_meta, &left_events, &right_meta, &right_events).ok_or_else(|| {
+        for (run_id, events) in [(left_run, &left_events), (right_run, &right_events)] {
+            if let Some(run_id) = run_id
+                && !events
+                    .iter()
+                    .any(|envelope| envelope.event.run_id() == Some(run_id))
+            {
+                return Err(ApiError::BadRequest(format!(
+                    "run `{run_id}` does not belong to the selected session"
+                )));
+            }
+        }
+        build_comparison(
+            &left_meta,
+            &left_events,
+            &right_meta,
+            &right_events,
+            left_run,
+            right_run,
+        )
+        .ok_or_else(|| {
             ApiError::NotFound("comparison requires a completed run in each session".to_owned())
         })
     }

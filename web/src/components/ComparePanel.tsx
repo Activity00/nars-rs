@@ -5,6 +5,8 @@ import { statusLabel } from "./RichText";
 
 interface Props {
   comparison?: CompareResponse;
+  comparing?: boolean;
+  onSelectRuns?: (leftRun?: string, rightRun?: string) => void;
   onClose: () => void;
 }
 
@@ -13,7 +15,19 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(2)} s`;
 }
 
-function Side({ side, label }: { side: CompareSide; label: string }) {
+function Side({
+  side,
+  label,
+  runs,
+  disabled,
+  onSelect,
+}: {
+  side: CompareSide;
+  label: string;
+  runs: CompareResponse["left_runs"];
+  disabled: boolean;
+  onSelect: (runId: string) => void;
+}) {
   const metrics = side.metrics;
   const rows: Array<[string, string | number]> = [
     ["Steps", metrics.steps],
@@ -37,6 +51,20 @@ function Side({ side, label }: { side: CompareSide; label: string }) {
           {statusLabel(metrics.status)}
         </span>
       </div>
+
+      <select
+        className="compare-run-select"
+        value={side.run_id}
+        disabled={disabled || runs.length === 0}
+        onChange={(event) => onSelect(event.target.value)}
+      >
+        {runs.map((run) => (
+          <option key={run.run_id} value={run.run_id}>
+            {run.goal.slice(0, 42) || "untitled"} · {statusLabel(run.status)} ·{" "}
+            {run.run_id.slice(-6)}
+          </option>
+        ))}
+      </select>
 
       <table className="compare-table">
         <tbody>
@@ -80,7 +108,12 @@ function Side({ side, label }: { side: CompareSide; label: string }) {
   );
 }
 
-export function ComparePanel({ comparison, onClose }: Props) {
+export function ComparePanel({
+  comparison,
+  comparing = false,
+  onSelectRuns,
+  onClose,
+}: Props) {
   useEffect(() => {
     if (!comparison) return;
     const onKey = (event: KeyboardEvent) => {
@@ -115,8 +148,20 @@ export function ComparePanel({ comparison, onClose }: Props) {
         </header>
 
         <div className="compare-grid">
-          <Side side={comparison.left} label="Branch run" />
-          <Side side={comparison.right} label="Parent source run" />
+          <Side
+            side={comparison.left}
+            label="Branch run"
+            runs={comparison.left_runs}
+            disabled={comparing}
+            onSelect={(runId) => onSelectRuns?.(runId, comparison.right.run_id)}
+          />
+          <Side
+            side={comparison.right}
+            label="Parent source run"
+            runs={comparison.right_runs}
+            disabled={comparing}
+            onSelect={(runId) => onSelectRuns?.(comparison.left.run_id, runId)}
+          />
         </div>
 
         {(comparison.only_left.length > 0 ||

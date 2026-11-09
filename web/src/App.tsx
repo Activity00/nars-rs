@@ -225,21 +225,29 @@ export default function App() {
     }
   }, [selectedId, run, refreshSessions]);
 
-  const compare = useCallback(async () => {
-    const selected = state.sessions.find(
-      (item: SessionMeta) => item.session_id === selectedId,
-    );
-    if (!selectedId || !selected?.parent_session_id) return;
-    setComparing(true);
-    try {
-      const result = await api.compare(selectedId, selected.parent_session_id);
-      setComparison(result);
-    } catch (error) {
-      dispatch({ type: "error", message: String(error) });
-    } finally {
-      setComparing(false);
-    }
-  }, [selectedId, state.sessions]);
+  const compare = useCallback(
+    async (leftRun?: string, rightRun?: string) => {
+      const selected = state.sessions.find(
+        (item: SessionMeta) => item.session_id === selectedId,
+      );
+      if (!selectedId || !selected?.parent_session_id) return;
+      setComparing(true);
+      try {
+        const result = await api.compare(
+          selectedId,
+          selected.parent_session_id,
+          leftRun,
+          rightRun,
+        );
+        setComparison(result);
+      } catch (error) {
+        dispatch({ type: "error", message: String(error) });
+      } finally {
+        setComparing(false);
+      }
+    },
+    [selectedId, state.sessions],
+  );
 
   const control = useCallback(
     async (action: "pause" | "resume" | "cancel") => {
@@ -395,6 +403,8 @@ export default function App() {
 
       <ComparePanel
         comparison={comparison}
+        comparing={comparing}
+        onSelectRuns={(leftRun, rightRun) => void compare(leftRun, rightRun)}
         onClose={() => setComparison(undefined)}
       />
     </div>

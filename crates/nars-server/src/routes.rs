@@ -234,6 +234,10 @@ async fn delete_session(
 #[derive(Debug, Deserialize)]
 struct CompareQuery {
     with: String,
+    #[serde(default)]
+    left_run: Option<String>,
+    #[serde(default)]
+    right_run: Option<String>,
 }
 
 async fn compare_sessions(
@@ -243,7 +247,14 @@ async fn compare_sessions(
 ) -> Result<Json<crate::compare::CompareResponse>, ApiError> {
     let left = SessionId::from_static(session_id);
     let right = SessionId::from_static(query.with);
-    Ok(Json(state.compare_sessions(&left, &right)?))
+    let left_run = query.left_run.map(RunId::from_static);
+    let right_run = query.right_run.map(RunId::from_static);
+    Ok(Json(state.compare_sessions(
+        &left,
+        &right,
+        left_run.as_ref(),
+        right_run.as_ref(),
+    )?))
 }
 
 #[derive(Debug, Deserialize)]

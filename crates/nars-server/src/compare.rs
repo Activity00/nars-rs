@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use nars_agent_ir::{AgentEvent, DecisionSource, RunId};
-use nars_session::{EventEnvelope, SessionMeta, summarize_runs};
+use nars_session::{EventEnvelope, RunSummary, SessionMeta, summarize_runs};
 use serde::Serialize;
 
 /// Metrics for one run.
@@ -64,6 +64,10 @@ pub struct CompareResponse {
     pub left: CompareSide,
     /// Parent/right session.
     pub right: CompareSide,
+    /// Runs available in the left session.
+    pub left_runs: Vec<RunSummary>,
+    /// Runs available in the right session.
+    pub right_runs: Vec<RunSummary>,
     /// Files touched by both.
     pub shared_files: Vec<String>,
     /// Files touched only by the left run.
@@ -74,27 +78,37 @@ pub struct CompareResponse {
 
 /// Computes comparison metrics for two sessions.
 ///
-/// The left run is the newest run in the left session. The right run is the
-/// left session's branch source when available, otherwise the newest run in the
-/// right session.
+/// The default left run is the newest run in the left session. The default
+/// right run is the left session's branch source when available, otherwise the
+/// newest run in the right session. Callers may override either run.
 #[must_use]
 pub fn compare(
     left_meta: &SessionMeta,
     left_events: &[EventEnvelope],
     right_meta: &SessionMeta,
     right_events: &[EventEnvelope],
+    left_run: Option<&RunId>,
+    right_run: Option<&RunId>,
 ) -> Option<CompareResponse> {
-    let left_run = summarize_runs(left_events).first()?.run_id.clone();
+    let left_runs = summarize_runs(left_events);
+    let right_runs = summarize_runs(right_events);
+    let left_default = left_runs.first()?.run_id.clone();
+    let left_run = left_run
+        .filter(|run_id| left_runs.iter().any(|summary| &summary.run_id == *run_id))
+        .cloned()
+        .unwrap_or(left_default);
     let source = left_meta.branched_from_run_id.as_ref().filter(|run_id| {
         right_events
             .iter()
             .any(|envelope| envelope.event.run_id() == Some(*run_id))
     });
-    let right_run = source.cloned().or_else(|| {
-        summarize_runs(right_events)
-            .first()
-            .map(|summary| summary.run_id.clone())
-    })?;
+    let right_default = source
+        .cloned()
+        .or_else(|| right_runs.first().map(|summary| summary.run_id.clone()))?;
+    let right_run = right_run
+        .filter(|run_id| right_runs.iter().any(|summary| &summary.run_id == *run_id))
+        .cloned()
+        .unwrap_or(right_default);
 
     let left_metrics = run_metrics(left_events, &left_run);
     let right_metrics = run_metrics(right_events, &right_run);
@@ -119,6 +133,8 @@ pub fn compare(
             run_id: right_run,
             metrics: right_metrics,
         },
+        left_runs,
+        right_runs,
         shared_files: left_files.intersection(&right_files).cloned().collect(),
         only_left: left_files.difference(&right_files).cloned().collect(),
         only_right: right_files.difference(&left_files).cloned().collect(),

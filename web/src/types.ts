@@ -44,6 +44,8 @@ export interface CompareSide {
 export interface CompareResponse {
   left: CompareSide;
   right: CompareSide;
+  left_runs: RunSummary[];
+  right_runs: RunSummary[];
   shared_files: string[];
   only_left: string[];
   only_right: string[];

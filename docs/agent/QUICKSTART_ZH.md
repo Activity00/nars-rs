@@ -103,7 +103,7 @@ cargo run -p narsd     # narsd 自动服务 web/dist
    写入父会话 lineage，并重新执行当前任务；原会话保持不变；
 9. 侧栏按 lineage 嵌套展示分支树，分支显示 `↳`；顶栏 **branch of ...** 与 Inspector **Lineage** 可跳转父会话；
 10. 选中会话可 **Rename** / **Delete**，删除当前会话后自动切换；
-11. 分支 Run 可 **Compare with parent**：对比状态、工具、fallback、文件变化和最终回答；
+11. 分支 Run 可 **Compare with parent**：面板内左右各选一个 Run，对比状态、工具、fallback、文件变化和最终回答；
 12. 观察工具输出、NARS 事实、下一次决策；
 13. 可随时 **Pause / Resume / Cancel**。
 

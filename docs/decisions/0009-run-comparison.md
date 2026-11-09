@@ -21,10 +21,19 @@
 
 `GET /api/sessions/{id}/compare?with={parent_id}`：
 
+默认：
+
 - **left**：当前 session 的最新 Run；
 - **right**：当前 session 的 `branched_from_run_id`（源 Run）；如果源 Run 不存在，则取父 session 的最新 Run。
 
-这样对比的是“分支新 Run”和“父会话源 Run”，不会把复制的历史 Run 计入 left。
+可以用查询参数覆盖：
+
+```http
+GET /api/sessions/{id}/compare?with={parent}&left_run={run_a}&right_run={run_b}
+```
+
+Run 必须属于对应 session，否则返回 400。响应同时返回 `left_runs` / `right_runs`，
+供 UI 选择。
 
 ### 指标
 
@@ -68,7 +77,8 @@
 Inspector 的 Lineage 区块显示 **Compare with parent**：
 
 - 打开模态面板；
-- 左右两列展示状态、步骤、模型/工具/审批/fallback/决策/观察、耗时；
+- 左右两列各有一个 Run 选择器，可在两个 session 的 Run 列表间自由切换；
+- 展示状态、步骤、模型/工具/审批/fallback/决策/观察、耗时；
 - 工具调用计数；
 - 文件 diff 行数；
 - 最终回答；
@@ -78,8 +88,8 @@ Inspector 的 Lineage 区块显示 **Compare with parent**：
 
 ## 限制
 
-- 只比较单个 Run，不做多 Run 统计或置信区间；
-- 只比较最新 branch Run 和源 Run，不能手选任意两个 Run；
+- 只比较两个 Run，不做多 Run 统计或置信区间；
+- 只能在“当前分支 session 与指定父 session”之间比较，不能任意选择两个 session；
 - 文件指标依赖工具返回的 diff，读取/搜索操作不会出现在文件列表；
 - 不比较 token usage、NARS 候选评分和完整事件序列；
 - 旧分支没有 `branched_from_run_id` 时退化为父会话最新 Run；
@@ -87,7 +97,7 @@ Inspector 的 Lineage 区块显示 **Compare with parent**：
 
 ## 后续
 
-- 任意两个 Run 的自由对比；
+- 任意两个 session 的对比；
 - 多 Run 重复实验的均值/方差；
 - 并排 diff 文本和事件时间线对齐；
 - 对比结果导出与评测集联动。

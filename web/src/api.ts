@@ -64,10 +64,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ workspace, title }),
     }),
-  compare: (sessionId: string, withSessionId: string) =>
-    request<CompareResponse>(
-      `/api/sessions/${sessionId}/compare?with=${encodeURIComponent(withSessionId)}`,
-    ),
+  compare: (
+    sessionId: string,
+    withSessionId: string,
+    leftRun?: string,
+    rightRun?: string,
+  ) => {
+    const params = new URLSearchParams({ with: withSessionId });
+    if (leftRun) params.set("left_run", leftRun);
+    if (rightRun) params.set("right_run", rightRun);
+    return request<CompareResponse>(
+      `/api/sessions/${sessionId}/compare?${params.toString()}`,
+    );
+  },
   branch: (sessionId: string, runId: string) =>
     request<{ session: any; run_id: string; copied_events: number }>(
       `/api/sessions/${sessionId}/branch`,

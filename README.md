@@ -20,7 +20,8 @@ MCP Streamable HTTP. Sessions persist as JSONL or SQLite. The web UI can switch
 between all runs or a single run, including runs restored after a restart. Sessions
 can be branched (with recorded lineage, a nested branch tree, and parent
 navigation), renamed, and deleted. Branch runs can be compared with their
-parent source run across status, tools, fallbacks, files, and final answer.
+parent source run across status, tools, fallbacks, files, and final answer,
+with selectable runs on both sides.
 
 ```text
 user message → model (Agent IR) → Rust validation → NARS goals/facts
