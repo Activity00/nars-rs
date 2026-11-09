@@ -231,6 +231,16 @@ export default function App() {
   );
 
   const session = state.sessions.find((item: SessionMeta) => item.session_id === selectedId);
+  const parentSession = session?.parent_session_id
+    ? state.sessions.find(
+        (item: SessionMeta) => item.session_id === session.parent_session_id,
+      )
+    : undefined;
+  const branchChildren = selectedId
+    ? state.sessions.filter(
+        (item: SessionMeta) => item.parent_session_id === selectedId,
+      ).length
+    : 0;
 
   return (
     <div className="app">
@@ -258,6 +268,19 @@ export default function App() {
           <div>
             <div className="topbar-title">{session?.title ?? "nars-agent"}</div>
             <div className="mono small">{session?.workspace ?? "no workspace selected"}</div>
+            {session?.parent_session_id && parentSession && (
+              <button
+                className="lineage-link topbar-lineage"
+                onClick={() => selectSession(session.parent_session_id!)}
+                title={
+                  session.branched_from_run_id
+                    ? `Source run ${session.branched_from_run_id}`
+                    : "Parent session"
+                }
+              >
+                ↳ branch of {parentSession?.title ?? "parent session"}
+              </button>
+            )}
           </div>
           <div className="topbar-actions">
             {runOptions.length > 0 && (
@@ -330,6 +353,14 @@ export default function App() {
         onResume={() => void control("resume")}
         onCancel={() => void control("cancel")}
         onBranch={() => void branch()}
+        parent={parentSession}
+        branchSource={session?.branched_from_run_id ?? undefined}
+        childCount={branchChildren}
+        onOpenParent={
+          session?.parent_session_id
+            ? () => selectSession(session.parent_session_id!)
+            : undefined
+        }
       />
     </div>
   );

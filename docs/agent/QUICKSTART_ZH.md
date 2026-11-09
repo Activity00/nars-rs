@@ -101,9 +101,10 @@ cargo run -p narsd     # narsd 自动服务 web/dist
    服务重启后历史 Run 仍可回看；
 8. 在已完成的 Run 上点击 **Branch & retry**：复制此前 Run 到新会话、重写 run/session id，
    写入父会话 lineage，并重新执行当前任务；原会话保持不变；
-9. 侧栏分支会话显示 `↳`；选中会话可 **Rename** / **Delete**，删除当前会话后自动切换；
-7. 观察工具输出、NARS 事实、下一次决策；
-8. 可随时 **Pause / Resume / Cancel**。
+9. 侧栏按 lineage 嵌套展示分支树，分支显示 `↳`；顶栏 **branch of ...** 与 Inspector **Lineage** 可跳转父会话；
+10. 选中会话可 **Rename** / **Delete**，删除当前会话后自动切换；
+11. 观察工具输出、NARS 事实、下一次决策；
+12. 可随时 **Pause / Resume / Cancel**。
 
 ## 5.5 接入 MCP 工具
 

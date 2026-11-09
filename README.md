@@ -18,7 +18,8 @@ only produces a validated **Agent IR** proposal; a policy-checked tool broker
 performs real work. The model can never call a tool directly. Tools can be built-in, MCP stdio, or
 MCP Streamable HTTP. Sessions persist as JSONL or SQLite. The web UI can switch
 between all runs or a single run, including runs restored after a restart. Sessions
-can be branched (with recorded lineage), renamed, and deleted.
+can be branched (with recorded lineage, a nested branch tree, and parent
+navigation), renamed, and deleted.
 
 ```text
 user message → model (Agent IR) → Rust validation → NARS goals/facts

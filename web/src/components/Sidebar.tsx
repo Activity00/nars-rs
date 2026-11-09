@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { SessionMeta, ToolManifest } from "../types";
 import { basename } from "../lib";
 
@@ -33,6 +33,76 @@ export function Sidebar({
 }: Props) {
   const [workspace, setWorkspace] = useState("");
   const [tokenDraft, setTokenDraft] = useState(token);
+
+  const ids = new Set(sessions.map((session) => session.session_id));
+  const children = new Map<string, SessionMeta[]>();
+  const roots: SessionMeta[] = [];
+  for (const session of sessions) {
+    const parent = session.parent_session_id;
+    if (parent && ids.has(parent)) {
+      const list = children.get(parent) ?? [];
+      list.push(session);
+      children.set(parent, list);
+    } else {
+      roots.push(session);
+    }
+  }
+
+  const renderSession = (
+    session: SessionMeta,
+    depth: number,
+    visited: Set<string>,
+  ): ReactNode => {
+    const nextVisited = new Set(visited);
+    nextVisited.add(session.session_id);
+    const descendants = (children.get(session.session_id) ?? []).filter(
+      (child) => !nextVisited.has(child.session_id),
+    );
+    return (
+      <li key={session.session_id}>
+        <button
+          className={`session-item ${selectedId === session.session_id ? "selected" : ""}`}
+          style={{ paddingLeft: `${10 + depth * 14}px` }}
+          onClick={() => onSelect(session.session_id)}
+        >
+          <span className="session-title">
+            {session.parent_session_id && (
+              <span className="session-branch" title="Branched session">
+                ↳{" "}
+              </span>
+            )}
+            {session.title || "Untitled"}
+          </span>
+          <span className="session-workspace mono small">
+            {basename(session.workspace)}
+          </span>
+        </button>
+        {selectedId === session.session_id && (
+          <div
+            className="session-actions"
+            style={{ paddingLeft: `${10 + depth * 14}px` }}
+          >
+            <button className="link-button" onClick={() => onRename(session)}>
+              Rename
+            </button>
+            <button
+              className="link-button danger"
+              onClick={() => onDelete(session)}
+            >
+              Delete
+            </button>
+          </div>
+        )}
+        {descendants.length > 0 && (
+          <ul className="session-children">
+            {descendants.map((child) =>
+              renderSession(child, depth + 1, nextVisited),
+            )}
+          </ul>
+        )}
+      </li>
+    );
+  };
 
   return (
     <aside className="sidebar">
@@ -83,42 +153,7 @@ export function Sidebar({
         <h2>Sessions</h2>
         {sessions.length === 0 && <div className="muted small">No sessions yet.</div>}
         <ul>
-          {sessions.map((session) => (
-            <li key={session.session_id}>
-              <button
-                className={`session-item ${selectedId === session.session_id ? "selected" : ""}`}
-                onClick={() => onSelect(session.session_id)}
-              >
-                <span className="session-title">
-                  {session.parent_session_id && (
-                    <span className="session-branch" title="Branched session">
-                      ↳{" "}
-                    </span>
-                  )}
-                  {session.title || "Untitled"}
-                </span>
-                <span className="session-workspace mono small">
-                  {basename(session.workspace)}
-                </span>
-              </button>
-              {selectedId === session.session_id && (
-                <div className="session-actions">
-                  <button
-                    className="link-button"
-                    onClick={() => onRename(session)}
-                  >
-                    Rename
-                  </button>
-                  <button
-                    className="link-button danger"
-                    onClick={() => onDelete(session)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              )}
-            </li>
-          ))}
+          {roots.map((session) => renderSession(session, 0, new Set()))}
         </ul>
       </section>
 

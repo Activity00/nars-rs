@@ -225,6 +225,44 @@ textarea:focus {
   color: var(--accent);
 }
 
+.sessions .session-children {
+  margin: 0;
+  padding: 0;
+}
+
+.lineage-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lineage-link:hover {
+  text-decoration: underline;
+}
+
+.topbar-lineage {
+  margin-top: 3px;
+}
+
+.lineage-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
 .session-item.selected {
   background: var(--panel-3);
   border-color: var(--border);

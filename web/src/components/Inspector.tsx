@@ -1,4 +1,4 @@
-import type { RunView } from "../types";
+import type { RunView, SessionMeta } from "../types";
 import { diffsOf, formatTokens, statusTone } from "../lib";
 import { statusLabel } from "./RichText";
 
@@ -9,6 +9,10 @@ interface Props {
   onResume: () => void;
   onCancel: () => void;
   onBranch?: () => void;
+  parent?: SessionMeta;
+  branchSource?: string;
+  childCount?: number;
+  onOpenParent?: () => void;
 }
 
 export function Inspector({
@@ -18,6 +22,10 @@ export function Inspector({
   onResume,
   onCancel,
   onBranch,
+  parent,
+  branchSource,
+  childCount = 0,
+  onOpenParent,
 }: Props) {
   if (!run) {
     return (
@@ -69,6 +77,33 @@ export function Inspector({
           )}
         </div>
       </section>
+
+      {(parent || childCount > 0) && (
+        <section>
+          <h3>Lineage</h3>
+          <div className="lineage-card">
+            {parent ? (
+              <button
+                className="lineage-link"
+                onClick={onOpenParent}
+                title={branchSource ? `Source run ${branchSource}` : "Parent session"}
+              >
+                <span>↳ {parent.title}</span>
+                {branchSource && (
+                  <span className="mono small">{branchSource.slice(0, 16)}</span>
+                )}
+              </button>
+            ) : (
+              <div className="muted small">Root session</div>
+            )}
+            {childCount > 0 && (
+              <div className="muted small">
+                {childCount} branch session{childCount === 1 ? "" : "s"}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {run.plan && run.plan.stages.length > 0 && (
         <section>

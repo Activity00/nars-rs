@@ -335,7 +335,13 @@ impl AppState {
         }
         let title = format!(
             "Branch · {}",
-            meta.title.chars().take(48).collect::<String>()
+            task.user_message
+                .lines()
+                .next()
+                .unwrap_or(&meta.title)
+                .chars()
+                .take(48)
+                .collect::<String>()
         );
         let branch = self.store.create_session_with_lineage(
             &meta.workspace,

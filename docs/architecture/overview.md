@@ -193,9 +193,11 @@ Run 历史不依赖进程内状态：`summarize_runs` 从事件日志投影 `Run
 
 三栏：
 
-1. 左：会话、workspace、工具目录、连接状态；分支会话显示 `↳`，选中会话可 Rename/Delete；
+1. 左：会话分支树（按 `parent_session_id` 缩进）、workspace、工具目录、连接状态；
+   分支显示 `↳`，选中会话可 Rename/Delete；
 2. 中：Run 选择器 + 对话与执行时间线（NARS 决策、工具卡片、diff、审批、状态）；
    可选择 `All runs` 或单个 Run，时间线按 Run 过滤；终止 Run 可 **Branch & retry**；
+   顶栏 **branch of ...** 跳转父会话；
 3. 右：当前目标、NARS goal atom、事实、候选评分、文件变化、token、控制按钮。
 
 UI 不直接访问文件系统，也不自行推断执行结果；所有内容来自 SSE 事件。

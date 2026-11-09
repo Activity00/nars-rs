@@ -51,7 +51,9 @@ DELETE /api/sessions/{id}
 
 ### 4. UI
 
-- 侧栏分支会话显示 `↳`；
+- 侧栏按 `parent_session_id` 嵌套展示分支树，分支会话显示 `↳` 并按层级缩进；
+- 顶栏显示 **branch of ...** 链接，可直接跳到父会话；
+- Inspector 的 **Lineage** 区块显示父会话、源 Run 短 ID 和直接子分支数；
 - 选中会话下方显示 **Rename** / **Delete**；
 - Rename 使用浏览器 prompt，Delete 使用 confirm；
 - 删除当前会话后自动选中下一个会话，或进入空状态。
@@ -84,12 +86,12 @@ ALTER TABLE sessions ADD COLUMN branched_from_run_id TEXT;
 - 删除是硬删除，没有回收站/软删除；
 - 删除只检查当前进程内的 live Run，跨进程并发写不在保护范围；
 - 有子分支的父会话不能直接删除，需要先删除分支，避免 lineage 悬空；
-- 没有分支树折叠/展开，只显示单层标记；
+- 分支树只做嵌套缩进展示，不支持折叠/展开或分支对比；
 - 重命名不会同步修改复制事件中的旧标题（标题不在事件里，通常无影响）。
 
 ## 后续
 
-- `parent_session_id` 的分支树视图与对比；
+- 分支对比视图与折叠/展开；
 - 软删除 / 恢复；
 - 批量清理与保留策略；
 - 基于 lineage 的分支评测统计。
