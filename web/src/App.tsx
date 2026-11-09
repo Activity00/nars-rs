@@ -173,6 +173,18 @@ export default function App() {
           )}
         </header>
 
+        {(state.provider === "demo" || state.provider === "echo") && (
+          <div className="banner info">
+            <span>
+              <strong>Offline demo mode</strong> — no real model is configured. The server is
+              using the deterministic <code>{state.provider}</code> provider (read-only
+              investigation only). Set <code>NARS_AGENT_PROVIDER=openai</code>,{" "}
+              <code>anthropic</code>, or <code>ollama</code> and restart <code>narsd</code> for
+              real coding work.
+            </span>
+          </div>
+        )}
+
         {state.globalError && (
           <div className="banner error">
             <span>{state.globalError}</span>

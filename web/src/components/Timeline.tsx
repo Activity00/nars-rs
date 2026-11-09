@@ -12,9 +12,14 @@ interface Props {
 }
 
 export function Timeline({ timeline, runs, busyCallId, onDecision }: Props) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const stickToBottom = useRef(true);
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    if (stickToBottom.current) {
+      bottomRef.current?.scrollIntoView({ block: "end" });
+    }
   }, [timeline.length]);
 
   if (timeline.length === 0) {
@@ -37,7 +42,16 @@ export function Timeline({ timeline, runs, busyCallId, onDecision }: Props) {
   }
 
   return (
-    <div className="timeline">
+    <div
+      className="timeline"
+      ref={containerRef}
+      onScroll={() => {
+        const element = containerRef.current;
+        if (!element) return;
+        stickToBottom.current =
+          element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+      }}
+    >
       {timeline.map((item) => {
         switch (item.kind) {
           case "user":

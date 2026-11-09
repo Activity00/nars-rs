@@ -88,6 +88,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(address).await?;
     tracing::info!(%address, provider = %provider_name, "narsd listening");
     println!("narsd listening on http://127.0.0.1:{}", args.port);
+    if provider_name == "demo" || provider_name == "echo" {
+        println!(
+            "offline {} provider active: set NARS_AGENT_PROVIDER=openai|anthropic|ollama for real work",
+            provider_name
+        );
+    }
     axum::serve(listener, app).await?;
     Ok(())
 }

@@ -119,7 +119,24 @@ fn proposal(tool: &str, arguments: Value, rationale: &str) -> AgentIr {
 
 fn final_answer(observations: &[Value]) -> AgentIr {
     let mut lines = vec![
-        "**Offline demo provider** — set `NARS_AGENT_PROVIDER` for real coding work.".to_owned(),
+        "**Offline demo mode**".to_owned(),
+        String::new(),
+        "No real model is configured, so this run used the deterministic demo provider. It only \
+         performs a read-only investigation (list files, read one file, summarize); it cannot \
+         write code or run tests."
+            .to_owned(),
+        String::new(),
+        "To do real coding work, restart `narsd` with a model provider, for example:".to_owned(),
+        String::new(),
+        "```bash".to_owned(),
+        "NARS_AGENT_PROVIDER=openai \\
+NARS_AGENT_API_KEY=sk-... \\
+NARS_AGENT_MODEL=gpt-4.1-mini \\
+cargo run -p narsd"
+            .to_owned(),
+        "```".to_owned(),
+        String::new(),
+        "Or use `NARS_AGENT_PROVIDER=ollama` with a local model.".to_owned(),
         String::new(),
         "Investigation summary:".to_owned(),
     ];
@@ -236,6 +253,10 @@ mod tests {
             {"tool": "read_file", "summary": "read lib.rs"}
         ]));
         let response = DemoProvider::default().complete(request).await.unwrap();
-        assert!(matches!(response.ir, AgentIr::FinalAnswer(_)));
+        let AgentIr::FinalAnswer(answer) = response.ir else {
+            panic!("expected final answer");
+        };
+        assert!(answer.text.contains("Offline demo mode"));
+        assert!(answer.text.contains("NARS_AGENT_PROVIDER=openai"));
     }
 }
