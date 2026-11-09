@@ -208,8 +208,13 @@ usage。Run 开始时从快照恢复 Reasoner，结束时把更新后的记忆�
 12 条概念写入 `TaskSpec.memory_brief`，以 `long_term_memory` 注入 prompt。
 
 记忆缺失时行为与以前一致（空记忆启动）。`GET /api/sessions/{id}/memory`
-返回概念/蕴含摘要，Web UI 的 **Memory** 面板直接展示。详见
-[ADR 0012](../decisions/0012-long-term-memory.md)。
+返回概念/蕴含摘要，Web UI 的 **Memory** 面板直接展示。
+
+同一工作区同时只允许一个 Run（占用时返回 409）；记忆文件带 `generation`，
+写回时校验，避免并发或外部写入被静默覆盖。每个 Run 启动时对继承记忆做一次
+衰减和清理（保留带蕴含的概念），原子表与构建不兼容时按名字迁移。
+详见 [ADR 0012](../decisions/0012-long-term-memory.md) 与
+[ADR 0013](../decisions/0013-memory-maintenance.md)。
 
 ## 7.6 跨 Run 上下文
 

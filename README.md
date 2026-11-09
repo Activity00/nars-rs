@@ -46,7 +46,8 @@ user message → model (Agent IR) → Rust validation → NARS goals/facts
   [0009](docs/decisions/0009-run-comparison.md),
   [0010](docs/decisions/0010-generic-verification.md),
   [0011](docs/decisions/0011-session-context.md),
-  [0012](docs/decisions/0012-long-term-memory.md)
+  [0012](docs/decisions/0012-long-term-memory.md),
+  [0013](docs/decisions/0013-memory-maintenance.md)
 - Architecture overview: [docs/architecture/overview.md](docs/architecture/overview.md)
 - Event protocol: [docs/protocol/events.md](docs/protocol/events.md)
 - 中文快速开始: [docs/agent/QUICKSTART_ZH.md](docs/agent/QUICKSTART_ZH.md)

@@ -173,6 +173,7 @@ impl NarsPlanner {
             })?;
         Self::configure_reasoner(&mut reasoner, seed)?;
         let mut planner = Self::with_reasoner(reasoner, run_key, tool_names, seed)?;
+        planner.maintain_memory();
         planner.apply_experience(experience);
         Ok(planner)
     }
@@ -354,6 +355,11 @@ impl NarsPlanner {
         }
         self.task_goal_type = snapshot.task_goal_type;
         Ok(())
+    }
+
+    /// Ages inherited memory once per run and drops stale concepts.
+    pub fn maintain_memory(&mut self) {
+        self.reasoner.maintain_memory();
     }
 
     /// Long-term memory together with the atom table it depends on.
@@ -989,20 +995,27 @@ mod tests {
     }
 
     #[test]
-    fn refuses_memory_with_a_drifted_atom_table() {
+    fn migrates_memory_with_a_drifted_atom_table() {
         let mut planner = planner();
         planner.commit_task(&task(), 0.8).unwrap();
-        let mut snapshot = planner.memory_snapshot();
+        let before = planner.memory_snapshot();
+        let mut snapshot = before.clone();
         snapshot.language.atoms[0] = "renamed".to_owned();
-        assert!(
-            NarsPlanner::new_with_snapshot(
-                "run_2",
-                ["read_file".to_owned(), "search".to_owned()],
-                7,
-                None,
-                &snapshot,
-            )
-            .is_err()
-        );
+
+        let restored = NarsPlanner::new_with_snapshot(
+            "run_2",
+            [
+                "read_file".to_owned(),
+                "search".to_owned(),
+                "apply_patch".to_owned(),
+            ],
+            7,
+            None,
+            &snapshot,
+        )
+        .expect("migration should keep the memory usable");
+        let after = restored.memory_snapshot();
+        assert_eq!(after.concepts.len(), before.concepts.len());
+        assert!(after.language.atoms.iter().any(|atom| atom == "renamed"));
     }
 }

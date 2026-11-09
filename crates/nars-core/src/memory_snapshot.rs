@@ -11,6 +11,7 @@
 //! representation that later changes.
 
 use core::fmt;
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -361,6 +362,103 @@ fn event_type(value: u8) -> Result<EventType, MemorySnapshotError> {
     }
 }
 
+/// Whether the stored atom table can be used without remapping.
+///
+/// A snapshot is compatible when its table extends this build's built-in
+/// table and keeps the same `SELF` atom: atom ids are positional, so a shifted
+/// prefix would change what every stored term means.
+#[must_use]
+pub fn is_compatible(snapshot: &MemorySnapshot) -> bool {
+    let Ok(stored) = Narsese::from_language_record(&snapshot.language) else {
+        return false;
+    };
+    let builtins = Narsese::new();
+    stored
+        .to_language_record()
+        .atoms
+        .starts_with(&builtins.to_language_record().atoms)
+        && stored.self_atom() == builtins.self_atom()
+}
+
+/// Rewrites a snapshot onto this build's atom table.
+///
+/// Migration maps every stored atom by *name* to its id in the current build,
+/// interning names the build no longer knows, and rewrites every term byte.
+/// Concept identities and learned implications are preserved, so an old
+/// workspace keeps its memory across builds that change the built-in table.
+///
+/// # Errors
+///
+/// Returns an error when a stored term is malformed or the atom table cannot be
+/// rebuilt.
+pub fn migrate(snapshot: &MemorySnapshot) -> Result<MemorySnapshot, MemorySnapshotError> {
+    if snapshot.language.atoms.len() > crate::config::ATOMS_MAX {
+        return Err(MemorySnapshotError::InvalidLanguage(
+            "stored atom table exceeds ATOMS_MAX".to_owned(),
+        ));
+    }
+    let mut language = Narsese::new();
+    let mut mapping: HashMap<u8, u8> = HashMap::new();
+    for (index, name) in snapshot.language.atoms.iter().enumerate() {
+        let old = u8::try_from(index + 1).map_err(|_| {
+            MemorySnapshotError::InvalidLanguage("stored atom index overflow".to_owned())
+        })?;
+        let new = language
+            .intern(name)
+            .map_err(|error| MemorySnapshotError::InvalidLanguage(error.to_string()))?;
+        if let Some(Some(value)) = snapshot.language.values.get(index) {
+            language
+                .set_atom_value(new, value.value, value.measurement.clone())
+                .map_err(|error| MemorySnapshotError::InvalidLanguage(error.to_string()))?;
+        }
+        mapping.insert(old, new);
+    }
+
+    let mut migrated = snapshot.clone();
+    migrated.version = MEMORY_SNAPSHOT_VERSION;
+    migrated.language = language.to_language_record();
+    for concept in &mut migrated.concepts {
+        concept.term = remap_term(&concept.term, &mapping)?;
+        remap_event(&mut concept.belief, &mapping)?;
+        remap_event(&mut concept.belief_spike, &mapping)?;
+        remap_event(&mut concept.predicted_belief, &mapping)?;
+        remap_event(&mut concept.goal_spike, &mapping)?;
+        for implication in &mut concept.implication_links {
+            implication.term = remap_term(&implication.term, &mapping)?;
+        }
+        for table in &mut concept.precondition_beliefs {
+            for implication in table {
+                implication.term = remap_term(&implication.term, &mapping)?;
+            }
+        }
+    }
+    Ok(migrated)
+}
+
+fn remap_event(
+    event: &mut EventRecord,
+    mapping: &HashMap<u8, u8>,
+) -> Result<(), MemorySnapshotError> {
+    event.term = remap_term(&event.term, mapping)?;
+    Ok(())
+}
+
+fn remap_term(encoded: &str, mapping: &HashMap<u8, u8>) -> Result<String, MemorySnapshotError> {
+    let term = decode_term(encoded)?;
+    let mut atoms = *term.atoms();
+    for atom in &mut atoms {
+        if *atom == crate::term::ATOM_FREE {
+            continue;
+        }
+        *atom = *mapping
+            .get(atom)
+            .ok_or_else(|| MemorySnapshotError::InvalidTerm(encoded.to_owned()))?;
+    }
+    let mut remapped = Term::EMPTY;
+    remapped.atoms_mut().copy_from_slice(&atoms);
+    Ok(encode_term(&remapped))
+}
+
 /// Encodes a term as the hex of its non-empty atom prefix.
 #[must_use]
 pub fn encode_term(term: &Term) -> String {
@@ -525,6 +623,72 @@ mod tests {
             memory.max_evidence_id() >= 1,
             "seeded belief should carry evidence"
         );
+    }
+
+    fn shift_term(encoded: &str, offset: u8) -> String {
+        let term = decode_term(encoded).expect("term");
+        let mut atoms = *term.atoms();
+        for atom in &mut atoms {
+            if *atom != crate::term::ATOM_FREE {
+                *atom = atom.checked_add(offset).expect("no overflow");
+            }
+        }
+        let mut shifted = Term::EMPTY;
+        shifted.atoms_mut().copy_from_slice(&atoms);
+        encode_term(&shifted)
+    }
+
+    #[test]
+    fn migrates_a_shifted_atom_table() {
+        let (language, memory, _) = seeded();
+        let snapshot = memory.to_snapshot(&language);
+        let original = snapshot
+            .concepts
+            .iter()
+            .map(|concept| language.format_term(&decode_term(&concept.term).expect("term")))
+            .collect::<Vec<_>>();
+
+        // Simulate an older build whose built-in table had one more atom at the
+        // front, shifting every stored id by one.
+        let mut shifted = snapshot.clone();
+        shifted
+            .language
+            .atoms
+            .insert(0, "legacy_builtin".to_owned());
+        shifted.language.values.insert(0, None);
+        for concept in &mut shifted.concepts {
+            concept.term = shift_term(&concept.term, 1);
+            concept.belief.term = shift_term(&concept.belief.term, 1);
+            concept.belief_spike.term = shift_term(&concept.belief_spike.term, 1);
+            concept.predicted_belief.term = shift_term(&concept.predicted_belief.term, 1);
+            concept.goal_spike.term = shift_term(&concept.goal_spike.term, 1);
+            for implication in &mut concept.implication_links {
+                implication.term = shift_term(&implication.term, 1);
+            }
+            for table in &mut concept.precondition_beliefs {
+                for implication in table {
+                    implication.term = shift_term(&implication.term, 1);
+                }
+            }
+        }
+
+        assert!(!is_compatible(&shifted));
+        let migrated = migrate(&shifted).expect("migrates");
+        assert!(is_compatible(&migrated));
+
+        let migrated_language =
+            Narsese::from_language_record(&migrated.language).expect("language");
+        let migrated_terms = migrated
+            .concepts
+            .iter()
+            .map(|concept| {
+                migrated_language.format_term(&decode_term(&concept.term).expect("term"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(migrated_terms, original);
+
+        let restored = Memory::from_snapshot(&migrated).expect("restore migrated");
+        assert_eq!(restored.concepts().count(), memory.concepts().count());
     }
 
     #[test]

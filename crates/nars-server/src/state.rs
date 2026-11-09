@@ -1,6 +1,6 @@
 //! Shared server state and the persistence sink attached to every run.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -92,6 +92,8 @@ pub struct AppState {
     runs: Mutex<HashMap<RunId, Arc<RunHandle>>>,
     /// Per-session event broadcasters.
     session_events: Mutex<HashMap<SessionId, broadcast::Sender<EventEnvelope>>>,
+    /// Workspaces with a live run, so two runs cannot clobber one memory file.
+    active_workspaces: Arc<Mutex<HashSet<String>>>,
     /// Configuration.
     pub config: ServerConfig,
 }
@@ -119,8 +121,25 @@ impl AppState {
             provider,
             runs: Mutex::new(HashMap::new()),
             session_events: Mutex::new(HashMap::new()),
+            active_workspaces: Arc::new(Mutex::new(HashSet::new())),
             config,
         })
+    }
+
+    /// Marks a workspace as busy; returns `false` when a run already holds it.
+    ///
+    /// Long-term memory is per workspace and written back at run end, so two
+    /// concurrent runs would overwrite each other's learning.
+    pub fn claim_workspace(&self, workspace: &str) -> bool {
+        self.active_workspaces
+            .lock()
+            .unwrap()
+            .insert(workspace.to_owned())
+    }
+
+    /// Releases a workspace when its run terminates.
+    pub fn release_workspace(&self, workspace: &str) {
+        self.active_workspaces.lock().unwrap().remove(workspace);
     }
 
     /// Returns or creates the broadcaster for a session.
@@ -215,17 +234,24 @@ impl AppState {
             .experience
             .as_ref()
             .and_then(|store| store.load(&workspace_text).ok());
-        let memory = self.config.memory.as_ref().and_then(|store| {
+        let stored = self.config.memory.as_ref().and_then(|store| {
             match store.load(&workspace_text) {
-                Ok(snapshot) => snapshot,
+                Ok(stored) => stored,
                 Err(error) => {
                     tracing::warn!(%error, workspace = %workspace_text, "failed to load workspace memory");
                     None
                 }
             }
         });
+        let memory_generation = stored.as_ref().map(|stored| stored.generation);
+        let memory = stored.map(|stored| stored.snapshot);
         if let Some(snapshot) = &memory {
             task.memory_brief = crate::memory_context::memory_brief(snapshot);
+        }
+        if !self.claim_workspace(&workspace_text) {
+            return Err(ApiError::Conflict(format!(
+                "workspace `{workspace_text}` already has a running task"
+            )));
         }
         let mut actor_config = self.config.actor.clone();
         actor_config.experience = experience;
@@ -236,11 +262,13 @@ impl AppState {
             sender.clone(),
             self.config.experience.clone(),
             self.config.memory.clone(),
-            workspace_text,
+            memory_generation,
+            Arc::clone(&self.active_workspaces),
+            workspace_text.clone(),
         ));
 
         let run_id = RunId::new();
-        let user_event = self.store.append(
+        let user_event = match self.store.append(
             session_id,
             AgentEvent::UserMessage {
                 session_id: session_id.clone(),
@@ -248,7 +276,13 @@ impl AppState {
                 text: task.user_message.clone(),
             },
             now_ms(),
-        )?;
+        ) {
+            Ok(event) => event,
+            Err(error) => {
+                self.release_workspace(&workspace_text);
+                return Err(error.into());
+            }
+        };
         let _ = sender.send(user_event);
 
         let runtime = AgentRuntime::new(
@@ -260,11 +294,14 @@ impl AppState {
                 retry: self.config.retry,
             },
         );
-        let handle = Arc::new(runtime.start_with_run_id(
-            session_id.clone(),
-            task.clone(),
-            run_id.clone(),
-        )?);
+        let handle =
+            match runtime.start_with_run_id(session_id.clone(), task.clone(), run_id.clone()) {
+                Ok(handle) => Arc::new(handle),
+                Err(error) => {
+                    self.release_workspace(&workspace_text);
+                    return Err(error.into());
+                }
+            };
         self.runs.lock().unwrap().insert(run_id.clone(), handle);
         let title = task
             .user_message
@@ -410,7 +447,8 @@ impl AppState {
         let snapshot = match &self.config.memory {
             Some(store) => store
                 .load(&meta.workspace)
-                .map_err(|error| ApiError::Internal(error.to_string()))?,
+                .map_err(|error| ApiError::Internal(error.to_string()))?
+                .map(|stored| stored.snapshot),
             None => None,
         };
         Ok(crate::memory_context::summary(
@@ -542,15 +580,22 @@ impl AppState {
             .experience
             .as_ref()
             .and_then(|store| store.load(&workspace_text).ok());
-        let memory = self.config.memory.as_ref().and_then(|store| {
+        let stored = self.config.memory.as_ref().and_then(|store| {
             match store.load(&workspace_text) {
-                Ok(snapshot) => snapshot,
+                Ok(stored) => stored,
                 Err(error) => {
                     tracing::warn!(%error, workspace = %workspace_text, "failed to load workspace memory");
                     None
                 }
             }
         });
+        let memory_generation = stored.as_ref().map(|stored| stored.generation);
+        let memory = stored.map(|stored| stored.snapshot);
+        if !self.claim_workspace(&workspace_text) {
+            return Err(ApiError::Conflict(format!(
+                "workspace `{workspace_text}` already has a running task"
+            )));
+        }
         let mut actor_config = self.config.actor.clone();
         actor_config.experience = experience;
         actor_config.initial_memory = memory;
@@ -560,7 +605,9 @@ impl AppState {
             sender,
             self.config.experience.clone(),
             self.config.memory.clone(),
-            workspace_text,
+            memory_generation,
+            Arc::clone(&self.active_workspaces),
+            workspace_text.clone(),
         ));
         let runtime = AgentRuntime::new(
             Arc::clone(&self.provider),
@@ -571,7 +618,13 @@ impl AppState {
                 retry: self.config.retry,
             },
         );
-        let handle = Arc::new(runtime.resume(snapshot.state, &planner)?);
+        let handle = match runtime.resume(snapshot.state, &planner) {
+            Ok(handle) => Arc::new(handle),
+            Err(error) => {
+                self.release_workspace(&workspace_text);
+                return Err(error.into());
+            }
+        };
         let run_id = handle.run_id.clone();
         self.runs.lock().unwrap().insert(run_id.clone(), handle);
         Ok(run_id)
@@ -703,12 +756,15 @@ pub struct StoreSink {
     last_seq: AtomicU64,
     experience: Option<Arc<dyn ExperienceStore>>,
     memory: Option<Arc<dyn MemoryStore>>,
+    memory_generation: Option<u64>,
+    active_workspaces: Arc<Mutex<HashSet<String>>>,
     workspace: String,
     task_counted: std::sync::atomic::AtomicBool,
 }
 
 impl StoreSink {
     /// Builds a sink for one session.
+    #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new(
         session_id: SessionId,
@@ -716,6 +772,8 @@ impl StoreSink {
         sender: broadcast::Sender<EventEnvelope>,
         experience: Option<Arc<dyn ExperienceStore>>,
         memory: Option<Arc<dyn MemoryStore>>,
+        memory_generation: Option<u64>,
+        active_workspaces: Arc<Mutex<HashSet<String>>>,
         workspace: String,
     ) -> Self {
         Self {
@@ -725,18 +783,28 @@ impl StoreSink {
             last_seq: AtomicU64::new(0),
             experience,
             memory,
+            memory_generation,
+            active_workspaces,
             workspace,
             task_counted: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
     fn persist_memory(&self, snapshot: &nars_core::MemorySnapshot) {
-        let Some(store) = &self.memory else {
-            return;
-        };
-        if let Err(error) = store.save(&self.workspace, snapshot) {
-            tracing::warn!(%error, workspace = %self.workspace, "failed to save workspace memory");
+        if let Some(store) = &self.memory {
+            match store.save(&self.workspace, self.memory_generation, snapshot) {
+                Ok(generation) => {
+                    tracing::debug!(generation, workspace = %self.workspace, "saved workspace memory");
+                }
+                Err(error) => {
+                    tracing::warn!(%error, workspace = %self.workspace, "failed to save workspace memory");
+                }
+            }
         }
+        self.active_workspaces
+            .lock()
+            .unwrap()
+            .remove(&self.workspace);
     }
 
     fn persist_experience(&self, state: &RunState, planner: &PlannerSnapshot) {

@@ -77,7 +77,5 @@ prompt 以 `long_term_memory` 数组呈现。system prompt 明确：这是先验
 
 ## 已知限制
 
-- 同一工作区并发 Run 采用“后写覆盖”，尚无版本合并或写锁；
 - occurrence 时间索引不恢复，重启后时序联想会短暂退化；
-- 尚无记忆衰减/容量回收策略，长期运行需要配合 `relative_forgetting` 的定期调用；
-- 原子表一旦与构建内置表不兼容，只能拒绝加载；后续需要迁移工具。
+- 并发、衰减与原子表迁移见 [ADR 0013](0013-memory-maintenance.md)。

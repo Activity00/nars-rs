@@ -139,20 +139,20 @@ impl Reasoner {
     /// Returns an error when the atom table is incompatible or the memory
     /// snapshot is malformed.
     pub fn from_snapshot(snapshot: &MemorySnapshot) -> Result<Self, ReasonerError> {
-        let builtins = Narsese::new();
+        // A build that changes the built-in atom table shifts every id, so the
+        // stored terms have to be remapped by atom name before they can be
+        // trusted.
+        let migrated;
+        let snapshot = if crate::memory_snapshot::is_compatible(snapshot) {
+            snapshot
+        } else {
+            migrated = crate::memory_snapshot::migrate(snapshot)
+                .map_err(|error| ReasonerError::new(error.to_string()))?;
+            &migrated
+        };
+
         let stored = Narsese::from_language_record(&snapshot.language)
             .map_err(|error| ReasonerError::new(error.to_string()))?;
-        let builtin_atoms = builtins.to_language_record().atoms;
-        if !stored
-            .to_language_record()
-            .atoms
-            .starts_with(&builtin_atoms)
-            || stored.self_atom() != builtins.self_atom()
-        {
-            return Err(ReasonerError::new(
-                "stored atom table does not extend this build's built-in table",
-            ));
-        }
 
         let mut reasoner = Self::new()?;
         reasoner.language = stored;
@@ -162,6 +162,18 @@ impl Reasoner {
             .map_err(|error| ReasonerError::new(error.to_string()))?;
         reasoner.set_next_evidence_id(reasoner.memory.max_evidence_id().saturating_add(1));
         Ok(reasoner)
+    }
+
+    /// Ages long-term memory and drops concepts that are no longer useful.
+    ///
+    /// Called once per new run so an old workspace does not keep stale
+    /// priorities at the top of the decision order forever. Returns the number
+    /// of pruned concepts.
+    pub fn maintain_memory(&mut self) -> usize {
+        self.memory.relative_forgetting();
+        let now = self.current_time;
+        let language = &self.language;
+        self.memory.prune_stale(language, now)
     }
 
     /// The atom table shared by every term in this runtime.

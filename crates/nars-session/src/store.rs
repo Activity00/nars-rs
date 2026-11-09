@@ -51,6 +51,9 @@ pub enum StoreError {
     /// SQLite or worker failure.
     #[error("session database error: {0}")]
     Database(String),
+    /// The stored value changed since it was loaded.
+    #[error("store conflict: {0}")]
+    Conflict(String),
 }
 
 /// Persistence interface, implemented by the file store and future SQLite store.

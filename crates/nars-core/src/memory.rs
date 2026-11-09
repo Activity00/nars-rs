@@ -301,6 +301,46 @@ impl Memory {
         self.active_goal_layers = 0;
     }
 
+    /// Drops concepts that decayed into irrelevance.
+    ///
+    /// Concepts that still carry learned implications are kept: rules are the
+    /// expensive part of memory and a rarely used rule can become relevant
+    /// again. Returns the number of removed concepts.
+    pub fn prune_stale(&mut self, language: &Narsese, current_time: i64) -> usize {
+        const MIN_PRIORITY: f64 = 0.01;
+        const MIN_USEFULNESS: f64 = 0.005;
+        let mut removed = 0;
+        for slot in 0..self.concepts.len() {
+            let Some(concept) = self.concepts[slot].as_ref() else {
+                continue;
+            };
+            if concept.priority >= MIN_PRIORITY
+                || concept.usage.usefulness(current_time) >= MIN_USEFULNESS
+                || !concept.implication_links.is_empty()
+                || concept
+                    .precondition_beliefs
+                    .iter()
+                    .any(|table| !table.is_empty())
+            {
+                continue;
+            }
+            let id = concept.id;
+            let term = concept.term;
+            self.concepts[slot] = None;
+            self.term_slots.remove(&term);
+            self.id_slots.remove(&id);
+            self.declarative_concept_ids
+                .retain(|existing| *existing != id);
+            self.generic_input_procedural_concept_ids
+                .retain(|existing| *existing != id);
+            self.variable_procedural_concept_ids
+                .retain(|existing| *existing != id);
+            self.inverted_index.remove(language, &term, id);
+            removed += 1;
+        }
+        removed
+    }
+
     pub fn relative_forgetting(&mut self) {
         for item in self.cycling_beliefs.iter_mut() {
             item.priority *= EVENT_DURABILITY;
@@ -817,7 +857,7 @@ impl Memory {
 mod tests {
     use super::{AddEventOptions, Memory};
     use crate::config::{ETERNAL_INPUT_USAGE_BOOST, OCCURRENCE_ETERNAL};
-    use crate::{EventFactory, EventType, Narsese, Stamp, Truth};
+    use crate::{EventFactory, EventType, Implication, Narsese, Stamp, Truth};
 
     #[test]
     fn upstream_memory_concept_creation_test() {
@@ -836,6 +876,32 @@ mod tests {
         assert!(memory.add_input_event(&language, second, 0));
         memory.conceptualize(&language, second_term, 1);
         assert!(memory.find(&second_term).is_some());
+    }
+
+    #[test]
+    fn prunes_decayed_concepts_but_keeps_learned_rules() {
+        let mut language = Narsese::new();
+        let mut memory = Memory::default();
+        let stale = language.atomic_term("stale").unwrap();
+        let rules = language.atomic_term("rules").unwrap();
+        memory.conceptualize(&language, stale, 0);
+        let rules_id = memory.conceptualize(&language, rules, 0).unwrap();
+        let consequent = language.atomic_term("consequent").unwrap();
+        let concept = memory.by_id_mut(rules_id).unwrap();
+        let _ = concept.implication_links.add(Implication {
+            term: consequent,
+            truth: Truth::new(0.9, 0.8),
+            stamp: Stamp::from_evidence([1]),
+            occurrence_time_offset: 0.0,
+            source_concept_id: Some(rules_id.0),
+            creation_time: 0,
+        });
+        memory.relative_forgetting();
+
+        let removed = memory.prune_stale(&language, 10_000);
+        assert_eq!(removed, 1);
+        assert!(memory.find(&stale).is_none());
+        assert!(memory.find(&rules).is_some());
     }
 
     #[test]

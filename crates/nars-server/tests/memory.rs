@@ -19,6 +19,7 @@ use tower::ServiceExt;
 
 struct Harness {
     app: Router,
+    state: Arc<AppState>,
     memory: Arc<FileMemoryStore>,
 }
 
@@ -57,7 +58,8 @@ fn harness(store_dir: &Path, memory_dir: &Path, rounds: usize) -> Harness {
         config,
     );
     Harness {
-        app: build_router(state),
+        app: build_router(Arc::clone(&state)),
+        state,
         memory,
     }
 }
@@ -148,8 +150,8 @@ async fn wait_for_memory(
         .display()
         .to_string();
     for _ in 0..100 {
-        if let Some(snapshot) = memory.load(&key).unwrap() {
-            return snapshot;
+        if let Some(stored) = memory.load(&key).unwrap() {
+            return stored.snapshot;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
@@ -222,4 +224,35 @@ async fn memory_survives_runs_and_a_restart() {
             "concept {term} was dropped across the restart"
         );
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn busy_workspace_rejects_a_second_run() {
+    let workspace = TempDir::new().unwrap();
+    let key = workspace
+        .path()
+        .canonicalize()
+        .unwrap()
+        .display()
+        .to_string();
+    let store_dir = TempDir::new().unwrap();
+    let memory_dir = TempDir::new().unwrap();
+    let harness = harness(store_dir.path(), memory_dir.path(), 1);
+    let session = create_session(&harness.app, workspace.path()).await;
+
+    assert!(
+        harness.state.claim_workspace(&key),
+        "workspace is claimable"
+    );
+    let (status, body) = request(
+        &harness.app,
+        Method::POST,
+        &format!("/api/sessions/{session}/messages"),
+        Some(json!({"text": "should be rejected"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+
+    harness.state.release_workspace(&key);
+    run_message(&harness.app, &session, "now it can run").await;
 }
