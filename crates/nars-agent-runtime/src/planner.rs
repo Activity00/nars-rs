@@ -522,6 +522,7 @@ impl NarsPlanner {
                         tool: candidate.tool.clone(),
                         score,
                         reason,
+                        model_proposed: index < model_candidate_count,
                     },
                 )
             })
@@ -547,6 +548,7 @@ impl NarsPlanner {
                         tool: top.tool.clone(),
                         arguments: action.arguments.clone(),
                         score: top.score,
+                        model_proposed: top.model_proposed,
                     })
             });
             return Ok(NarsDecision {
@@ -637,6 +639,10 @@ impl NarsPlanner {
                         tool: captured.tool.clone(),
                         arguments: selected_candidate.arguments.clone(),
                         score,
+                        model_proposed: scored
+                            .iter()
+                            .find(|entry| entry.candidate_id == *candidate_id)
+                            .is_some_and(|entry| entry.model_proposed),
                     }),
                     scored: scored.clone(),
                     rationale: format!(
@@ -670,6 +676,7 @@ impl NarsPlanner {
                     tool: candidate.tool.clone(),
                     arguments: action.arguments.clone(),
                     score: candidate.score,
+                    model_proposed: candidate.model_proposed,
                 })
         });
         let mut decision = NarsDecision {
@@ -858,6 +865,7 @@ impl NarsPlanner {
             tool: candidate.tool.clone(),
             arguments: candidate.arguments.clone(),
             score: entry.score,
+            model_proposed: entry.model_proposed,
         });
         decision.rationale = format!(
             "NARS outcome memory ranked `{}` over `{previous}`; {}",

@@ -42,6 +42,18 @@
 
 `fallback_candidates` 仍然补充（验证失败后切换工具依赖它），但覆盖判定会记录候选来源：模型候选数量之内的项优先。这样 NARS 选到一个“中性”回退工具时，只要模型候选的期望不更低，就会切回模型候选。
 
+### 5. 候选来源可区分，NARS 可以引入模型没提过的工具
+
+决策记录增加 `model_proposed`：模型候选为 true，NARS/计划引入的候选为 false。
+模型候选被证据否决时，NARS 可以从阶段模板里引入带参数的替代工具（例如读文件失败后引入
+`list_files`/`search`），并把它选为最终动作。
+
+评测新增两个任务：
+
+- `nars_override_after_failure`：模型重复提案失败工具，NARS 改选模型提过的 `search`；
+- `nars_picks_unproposed_tool`：模型只提案失败的 `read_file`，NARS 引入并选择
+  `list_files`/`search`（NARS pickup = 2）。
+
 ## 评测
 
 新增 `nars_override_after_failure`：模型两次都把刚失败的 `read_file` 作为最高置信候选，`search` 只有 0.45。
@@ -51,6 +63,8 @@
 | NARS 通过 | 6/6 | **7/7** |
 | Model-top 基线 | 6/6 | **6/7**（新任务失败） |
 | 新任务 override | 0% | **50%** |
+| NARS 引入的候选（pickup） | 0 | **3**（两个任务合计） |
+| Model-top 基线 | 6/6 | **7/8** |
 
 基线在新任务上仍然失败，说明 NARS 这次确实改变了结果，而不是又跟着模型走。
 

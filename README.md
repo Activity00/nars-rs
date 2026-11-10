@@ -29,8 +29,9 @@ that is loaded at run start and written back when a run finishes. Agent-level
 facts (tool outcomes, plan progress, user preferences) are promoted into a
 cross-workspace profile and seeded into every run; the web UI can inspect both
 through the Memory panel. Tool outcomes are learned back into NARS memory and
-can override the model's preferred candidate; the eval reports the override
-rate and a model-top baseline.
+can override the model's preferred candidate or introduce a tool the model did
+not propose; the eval reports the override rate, the NARS-pickup count, and a
+model-top baseline.
 
 ```text
 user message → model (Agent IR) → Rust validation → NARS goals/facts

@@ -459,6 +459,14 @@ pub struct ScoredCandidate {
     pub score: f64,
     /// Explanation of how the score was derived.
     pub reason: String,
+    /// Whether the model proposed this candidate (false = introduced by NARS
+    /// or the plan as an alternative).
+    #[serde(default = "default_model_proposed")]
+    pub model_proposed: bool,
+}
+
+fn default_model_proposed() -> bool {
+    true
 }
 
 /// The action NARS selected.
@@ -472,6 +480,9 @@ pub struct SelectedAction {
     pub arguments: Value,
     /// Score associated with the selection.
     pub score: f64,
+    /// Whether the model proposed the selected action.
+    #[serde(default = "default_model_proposed")]
+    pub model_proposed: bool,
 }
 
 /// How the decision was produced.

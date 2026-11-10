@@ -136,6 +136,8 @@ pub struct TaskMetrics {
     /// Fraction of decisions where NARS picked a candidate other than the
     /// highest pre-scored one. Zero means NARS never changed the outcome.
     pub override_rate: f64,
+    /// Decisions whose selected tool the model did not propose.
+    pub nars_selected: u32,
     /// Status of the same task under the model-top baseline (scripted only).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub baseline_status: String,
@@ -229,8 +231,8 @@ impl Report {
         let mut output = format!(
             "# nars-agent evaluation report\n\nProvider: `{}`\n\n\
              Passed: **{}** · Failed: **{}** · Skipped: **{}** · Baseline (model-top): **{} / {}** · Duration: {:.2}s\n\n\
-             | Task | Status | Tools | Decisions | NARS override | Baseline | Model calls | Approvals | Replay |\n\
-             |---|---|---:|---:|---:|---|---:|---:|---|\n",
+             | Task | Status | Tools | Decisions | NARS override | NARS pickup | Baseline | Model calls | Approvals | Replay |\n\
+             |---|---|---:|---:|---:|---:|---|---:|---:|---|\n",
             self.provider,
             self.passed,
             self.failed,
@@ -250,12 +252,13 @@ impl Report {
                 )
             };
             output.push_str(&format!(
-                "| `{}` | {} | {} | {} | {:.0}% | {} | {} | {} | {} |\n",
+                "| `{}` | {} | {} | {} | {:.0}% | {} | {} | {} | {} | {} |\n",
                 task.id,
                 task.status,
                 task.metrics.tools.len(),
                 task.metrics.decisions,
                 task.metrics.override_rate * 100.0,
+                task.metrics.nars_selected,
                 baseline,
                 task.metrics.model_calls,
                 task.metrics.approvals,
@@ -545,6 +548,16 @@ async fn run_task_with(
                 .is_some_and(|top| top.candidate_id != selected.candidate_id)
         })
         .count();
+    let nars_selected = state
+        .decisions
+        .iter()
+        .filter(|decision| {
+            decision
+                .selected
+                .as_ref()
+                .is_some_and(|selected| !selected.model_proposed)
+        })
+        .count();
     let override_rate = if decisions == 0 {
         0.0
     } else {
@@ -585,6 +598,7 @@ async fn run_task_with(
         decisions: u32::try_from(decisions).unwrap_or(u32::MAX),
         fallbacks: u32::try_from(fallbacks).unwrap_or(u32::MAX),
         override_rate,
+        nars_selected: u32::try_from(nars_selected).unwrap_or(u32::MAX),
         baseline_status: String::new(),
         baseline_steps: 0,
         baseline_tools: Vec::new(),
@@ -736,6 +750,14 @@ fn evaluate(
         failures.push(format!(
             "approval_required expected {expected}, observed {} approval(s)",
             metrics.approvals
+        ));
+    }
+    if let Some(minimum) = expect.get("min_nars_selected").and_then(Value::as_u64)
+        && u64::from(metrics.nars_selected) < minimum
+    {
+        failures.push(format!(
+            "NARS selected {} tool(s) the model did not propose, expected {minimum}",
+            metrics.nars_selected
         ));
     }
     if let Some(minimum) = expect.get("min_override_rate").and_then(Value::as_f64)

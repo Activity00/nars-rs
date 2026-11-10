@@ -1,0 +1,117 @@
+{
+  "id": "nars_picks_unproposed_tool",
+  "category": "nars_tasks",
+  "goal_type": "investigate",
+  "prompt": "Read src/missing.rs and summarize it.",
+  "setup": {
+    "fixture": "missing_then_present"
+  },
+  "limits": {
+    "max_steps": 8,
+    "max_model_calls": 8
+  },
+  "script": [
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "investigate",
+        "target": "src/missing.rs",
+        "description": "Read the requested file"
+      },
+      "candidate_actions": [
+        {
+          "tool": "read_file",
+          "arguments": {
+            "path": "src/missing.rs"
+          },
+          "confidence": 0.95
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "investigate",
+        "description": "Try the same file again"
+      },
+      "candidate_actions": [
+        {
+          "tool": "read_file",
+          "arguments": {
+            "path": "src/missing.rs"
+          },
+          "confidence": 0.95
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "investigate",
+        "target": "src/lib.rs",
+        "description": "Read the discovered file"
+      },
+      "candidate_actions": [
+        {
+          "tool": "read_file",
+          "arguments": {
+            "path": "src/lib.rs"
+          },
+          "confidence": 0.9
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "final_answer",
+      "text": "src/missing.rs is absent; src/lib.rs defines `alpha`.",
+      "success": true,
+      "artifacts": [
+        "src/lib.rs"
+      ]
+    },
+    {
+      "kind": "final_answer",
+      "text": "src/missing.rs is absent; src/lib.rs defines `alpha`.",
+      "success": true,
+      "artifacts": [
+        "src/lib.rs"
+      ]
+    },
+    {
+      "kind": "final_answer",
+      "text": "src/missing.rs is absent; src/lib.rs defines `alpha`.",
+      "success": true,
+      "artifacts": [
+        "src/lib.rs"
+      ]
+    },
+    {
+      "kind": "final_answer",
+      "text": "src/missing.rs is absent; src/lib.rs defines `alpha`.",
+      "success": true,
+      "artifacts": [
+        "src/lib.rs"
+      ]
+    },
+    {
+      "kind": "final_answer",
+      "text": "src/missing.rs is absent; src/lib.rs defines `alpha`.",
+      "success": true,
+      "artifacts": [
+        "src/lib.rs"
+      ]
+    }
+  ],
+  "expect": {
+    "tools_used": [
+      "read_file",
+      "list_files"
+    ],
+    "min_nars_selected": 1,
+    "run_status": "completed",
+    "replay_hash_equal": true
+  }
+}
