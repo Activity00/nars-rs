@@ -28,7 +28,9 @@ workspace keeps a durable NARS memory (concepts, beliefs, learned implications)
 that is loaded at run start and written back when a run finishes. Agent-level
 facts (tool outcomes, plan progress, user preferences) are promoted into a
 cross-workspace profile and seeded into every run; the web UI can inspect both
-through the Memory panel.
+through the Memory panel. Tool outcomes are learned back into NARS memory and
+can override the model's preferred candidate; the eval reports the override
+rate and a model-top baseline.
 
 ```text
 user message → model (Agent IR) → Rust validation → NARS goals/facts
@@ -50,7 +52,8 @@ user message → model (Agent IR) → Rust validation → NARS goals/facts
   [0011](docs/decisions/0011-session-context.md),
   [0012](docs/decisions/0012-long-term-memory.md),
   [0013](docs/decisions/0013-memory-maintenance.md),
-  [0014](docs/decisions/0014-profile-memory.md)
+  [0014](docs/decisions/0014-profile-memory.md),
+  [0015](docs/decisions/0015-decision-learning.md)
 - Architecture overview: [docs/architecture/overview.md](docs/architecture/overview.md)
 - Event protocol: [docs/protocol/events.md](docs/protocol/events.md)
 - 中文快速开始: [docs/agent/QUICKSTART_ZH.md](docs/agent/QUICKSTART_ZH.md)

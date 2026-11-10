@@ -683,6 +683,7 @@ impl SessionActor {
         }
 
         let (mut candidates, deferred) = self.plan.filter(&proposal.candidate_actions);
+        let model_candidate_count = candidates.len();
         candidates.extend(self.plan.fallback_candidates(&self.state.task));
         dedupe_candidates(&mut candidates);
 
@@ -720,14 +721,13 @@ impl SessionActor {
 
         self.state.step += 1;
         self.plan.set_step(self.state.step);
-        let stage = self
-            .plan
-            .active_stage()
-            .map_or("none", |stage| stage.id.as_str());
-        let context_key = format!("{}:{}", self.state.task.goal.goal_type.atom_suffix(), stage);
-        let mut decision = self
-            .planner
-            .decide(self.state.step, &context_key, &candidates)?;
+        let context_key = self.state.task.goal.goal_type.atom_suffix().to_owned();
+        let mut decision = self.planner.decide(
+            self.state.step,
+            &context_key,
+            model_candidate_count,
+            &candidates,
+        )?;
         decision.plan = Some(self.plan.view(self.state.step));
         if !deferred.is_empty() {
             let stage = self

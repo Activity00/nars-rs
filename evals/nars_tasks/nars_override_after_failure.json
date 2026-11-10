@@ -1,0 +1,97 @@
+{
+  "id": "nars_override_after_failure",
+  "category": "nars_tasks",
+  "goal_type": "investigate",
+  "prompt": "Read src/missing.rs; if that fails, search for alpha and read src/lib.rs.",
+  "setup": {
+    "fixture": "missing_then_present"
+  },
+  "limits": {
+    "max_steps": 8,
+    "max_model_calls": 8
+  },
+  "script": [
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "investigate",
+        "target": "src/missing.rs",
+        "description": "Read the requested file"
+      },
+      "candidate_actions": [
+        {
+          "tool": "read_file",
+          "arguments": {
+            "path": "src/missing.rs"
+          },
+          "confidence": 0.95
+        },
+        {
+          "tool": "search",
+          "arguments": {
+            "query": "alpha"
+          },
+          "confidence": 0.45
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "task_proposal",
+      "goal": {
+        "type": "investigate",
+        "description": "Try the same file again"
+      },
+      "candidate_actions": [
+        {
+          "tool": "read_file",
+          "arguments": {
+            "path": "src/missing.rs"
+          },
+          "confidence": 0.95
+        },
+        {
+          "tool": "search",
+          "arguments": {
+            "query": "alpha"
+          },
+          "confidence": 0.45
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "kind": "final_answer",
+      "text": "src/missing.rs is absent; `alpha` lives in src/lib.rs.",
+      "success": true,
+      "artifacts": [
+        "src/lib.rs"
+      ]
+    },
+    {
+      "kind": "final_answer",
+      "text": "src/missing.rs is absent; `alpha` lives in src/lib.rs.",
+      "success": true,
+      "artifacts": [
+        "src/lib.rs"
+      ]
+    },
+    {
+      "kind": "final_answer",
+      "text": "src/missing.rs is absent; `alpha` lives in src/lib.rs.",
+      "success": true,
+      "artifacts": [
+        "src/lib.rs"
+      ]
+    }
+  ],
+  "expect": {
+    "tools_used": [
+      "read_file",
+      "search"
+    ],
+    "min_override_rate": 0.4,
+    "run_status": "completed",
+    "replay_hash_equal": true
+  }
+}

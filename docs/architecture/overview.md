@@ -220,6 +220,10 @@ usage。Run 开始时从快照恢复 Reasoner，结束时把更新后的记忆�
 [ADR 0013](../decisions/0013-memory-maintenance.md) 与
 [ADR 0014](../decisions/0014-profile-memory.md)。
 
+工具成败会写成 `<操作 =/> 目标>` 蕴含，进入目标概念的 `precondition_beliefs`；
+NARS 据此排序候选，证据与模型偏好冲突时可以覆盖模型选择。评测输出 override
+率与 model-top 基线。详见 [ADR 0015](../decisions/0015-decision-learning.md)。
+
 ## 7.6 跨 Run 上下文
 
 每个 Run 启动时，服务端从事件日志投影最近 6 个已完成轮次，写入

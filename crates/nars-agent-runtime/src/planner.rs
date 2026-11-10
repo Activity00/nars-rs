@@ -483,6 +483,7 @@ impl NarsPlanner {
         &mut self,
         step: u32,
         context_key: &str,
+        model_candidate_count: usize,
         candidates: &[CandidateAction],
     ) -> Result<NarsDecision, AgentError> {
         self.decision_count = self.decision_count.saturating_add(1);
@@ -646,7 +647,12 @@ impl NarsPlanner {
                     source: DecisionSource::Nars,
                     plan: None,
                 };
-                self.apply_learned_override(&learned, candidates, &mut decision);
+                self.apply_learned_override(
+                    &learned,
+                    model_candidate_count,
+                    candidates,
+                    &mut decision,
+                );
                 return Ok(decision);
             }
         }
@@ -680,7 +686,7 @@ impl NarsPlanner {
             },
             plan: None,
         };
-        self.apply_learned_override(&learned, candidates, &mut decision);
+        self.apply_learned_override(&learned, model_candidate_count, candidates, &mut decision);
         Ok(decision)
     }
 
@@ -804,6 +810,7 @@ impl NarsPlanner {
     fn apply_learned_override(
         &self,
         learned: &BTreeMap<String, f64>,
+        model_candidate_count: usize,
         candidates: &[CandidateAction],
         decision: &mut NarsDecision,
     ) {
@@ -822,7 +829,20 @@ impl NarsPlanner {
             return;
         };
         let clearly_worse = current_score < 0.2 && score >= 0.4;
-        if candidate.tool == current.tool || (score <= current_score + 0.1 && !clearly_worse) {
+        let current_index = candidates
+            .iter()
+            .position(|entry| entry.tool == current.tool)
+            .unwrap_or(usize::MAX);
+        let best_is_model = candidates
+            .iter()
+            .position(|entry| entry.tool == candidate.tool)
+            .is_some_and(|index| index < model_candidate_count);
+        let current_is_fallback = current_index >= model_candidate_count;
+        let fallback_to_model =
+            best_is_model && current_is_fallback && score + 0.05 >= current_score;
+        if candidate.tool == current.tool
+            || (score <= current_score + 0.1 && !clearly_worse && !fallback_to_model)
+        {
             return;
         }
         let Some(entry) = decision
@@ -995,7 +1015,7 @@ mod tests {
                 .with_arguments(json!({"path": "src/lib.rs"}))
                 .with_confidence(0.7),
         ];
-        let decision = planner.decide(1, "test:stage", &candidates).unwrap();
+        let decision = planner.decide(1, "test:stage", 0, &candidates).unwrap();
         assert_eq!(decision.source, DecisionSource::Nars, "{decision:?}");
         assert_eq!(decision.selected.as_ref().unwrap().tool, "search");
     }
@@ -1022,7 +1042,7 @@ mod tests {
                 .with_arguments(json!({"path": "src/lib.rs"}))
                 .with_confidence(0.7),
         ];
-        let decision = planner.decide(2, "test:stage", &candidates).unwrap();
+        let decision = planner.decide(2, "test:stage", 0, &candidates).unwrap();
         assert_eq!(
             decision.selected.as_ref().unwrap().tool,
             "read_file",
@@ -1066,8 +1086,8 @@ mod tests {
             CandidateAction::new("read_file").with_confidence(0.6),
             CandidateAction::new("search").with_confidence(0.6),
         ];
-        let left_decision = left.decide(1, "test:stage", &candidates).unwrap();
-        let right_decision = right.decide(1, "test:stage", &candidates).unwrap();
+        let left_decision = left.decide(1, "test:stage", 0, &candidates).unwrap();
+        let right_decision = right.decide(1, "test:stage", 0, &candidates).unwrap();
         assert_eq!(left_decision, right_decision);
     }
 
@@ -1093,7 +1113,7 @@ mod tests {
                 .with_arguments(json!({"path": "src/lib.rs"}))
                 .with_confidence(0.7),
         ];
-        let decision = planner.decide(1, "test:stage", &candidates).unwrap();
+        let decision = planner.decide(1, "test:stage", 0, &candidates).unwrap();
         assert_eq!(decision.selected.as_ref().unwrap().tool, "read_file");
     }
 
@@ -1101,7 +1121,7 @@ mod tests {
     fn empty_candidates_produce_no_selection() {
         let mut planner = planner();
         planner.commit_task(&task(), 0.8).unwrap();
-        let decision = planner.decide(1, "test:stage", &[]).unwrap();
+        let decision = planner.decide(1, "test:stage", 0, &[]).unwrap();
         assert!(decision.selected.is_none());
         assert_eq!(decision.source, DecisionSource::None);
     }
@@ -1119,7 +1139,7 @@ mod tests {
                 .with_confidence(0.4),
         ];
         let first = planner
-            .decide(1, "modify_code:investigate", &candidates)
+            .decide(1, "modify_code:investigate", 2, &candidates)
             .unwrap();
         assert_eq!(
             first
@@ -1138,7 +1158,7 @@ mod tests {
         planner.record_outcome(1, &candidates[0], &failure).unwrap();
 
         let second = planner
-            .decide(2, "modify_code:investigate", &candidates)
+            .decide(2, "modify_code:investigate", 2, &candidates)
             .unwrap();
         assert_eq!(
             second
@@ -1163,7 +1183,7 @@ mod tests {
                 .with_arguments(json!({"query": "parser"}))
                 .with_confidence(0.95),
         ];
-        let decision = planner.decide(1, "test:stage", &candidates).unwrap();
+        let decision = planner.decide(1, "test:stage", 0, &candidates).unwrap();
         assert_eq!(decision.source, DecisionSource::Baseline, "{decision:?}");
         assert_eq!(
             decision.selected.as_ref().unwrap().candidate_id,
