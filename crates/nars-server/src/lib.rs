@@ -10,6 +10,7 @@ pub mod compare;
 pub mod error;
 pub mod fs_browse;
 mod history;
+pub mod knowledge;
 mod memory_context;
 pub mod routes;
 pub mod sse;

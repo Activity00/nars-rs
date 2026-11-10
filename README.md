@@ -58,7 +58,8 @@ user message → model (Agent IR) → Rust validation → NARS goals/facts
   [0015](docs/decisions/0015-decision-learning.md),
   [0016](docs/decisions/0016-forward-chaining.md),
   [0017](docs/decisions/0017-narsese-goal-actions.md),
-  [0018](docs/decisions/0018-ask-model-operation.md)
+  [0018](docs/decisions/0018-ask-model-operation.md),
+  [0019](docs/decisions/0019-question-knowledge.md)
 - Architecture overview: [docs/architecture/overview.md](docs/architecture/overview.md)
 - Event protocol: [docs/protocol/events.md](docs/protocol/events.md)
 - 中文快速开始: [docs/agent/QUICKSTART_ZH.md](docs/agent/QUICKSTART_ZH.md)

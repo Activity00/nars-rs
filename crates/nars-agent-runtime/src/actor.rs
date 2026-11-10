@@ -41,6 +41,8 @@ pub struct ActorConfig {
     pub initial_memory: Option<MemorySnapshot>,
     /// Cross-workspace facts seeded as prior beliefs.
     pub profile_facts: Vec<nars_agent_ir::NarsFact>,
+    /// Workspace knowledge learned from earlier model answers.
+    pub prior_knowledge: Vec<(String, String)>,
     /// Decision mode; `Baseline` is only used by evaluation.
     pub selection: SelectionMode,
 }
@@ -69,6 +71,7 @@ impl Default for ActorConfig {
             experience: None,
             initial_memory: None,
             profile_facts: Vec::new(),
+            prior_knowledge: Vec::new(),
             selection: SelectionMode::Nars,
         }
     }
@@ -706,7 +709,18 @@ impl SessionActor {
             .observations
             .iter()
             .any(|observation| observation.tool == "ask_model");
-        let ask_first = is_question && !asked_model && self.manifests.contains_key("ask_model");
+        let question = if self.state.task.user_message.trim().is_empty() {
+            self.state.task.goal.description.clone()
+        } else {
+            self.state.task.user_message.clone()
+        };
+        let known = self
+            .config
+            .prior_knowledge
+            .iter()
+            .any(|(asked, _)| asked.trim().eq_ignore_ascii_case(question.trim()));
+        let ask_first =
+            is_question && !asked_model && !known && self.manifests.contains_key("ask_model");
         if nars_stage == "answer" && self.plan.is_active() && !ask_first {
             // NARS believes the work is done; ask the model to render the
             // answer instead of executing another action.

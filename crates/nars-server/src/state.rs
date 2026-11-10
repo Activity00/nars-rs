@@ -327,6 +327,15 @@ impl AppState {
         if let Some(snapshot) = &memory {
             task.memory_brief = crate::memory_context::memory_brief(snapshot);
         }
+        let knowledge = Arc::new(crate::knowledge::KnowledgeStore::for_workspace(&workspace));
+        let entries = knowledge.load();
+        if !entries.is_empty() {
+            task.memory_brief.extend(
+                entries.iter().rev().take(20).rev().map(|entry| {
+                    format!("Known answer — Q: {} A: {}", entry.question, entry.answer)
+                }),
+            );
+        }
         let profile_facts = self.load_profile_facts();
         if !self.claim_workspace(&workspace_text) {
             return Err(ApiError::Conflict(format!(
@@ -337,6 +346,10 @@ impl AppState {
         actor_config.experience = experience;
         actor_config.initial_memory = memory;
         actor_config.profile_facts = profile_facts;
+        actor_config.prior_knowledge = entries
+            .iter()
+            .map(|entry| (entry.question.clone(), entry.answer.clone()))
+            .collect();
         let sink = Arc::new(StoreSink::new(
             session_id.clone(),
             Arc::clone(&self.store),
@@ -347,6 +360,7 @@ impl AppState {
             memory_generation,
             Arc::clone(&self.active_workspaces),
             workspace_text.clone(),
+            Some(Arc::clone(&knowledge)),
         ));
 
         let run_id = RunId::new();
@@ -693,6 +707,7 @@ impl AppState {
             memory_generation,
             Arc::clone(&self.active_workspaces),
             workspace_text.clone(),
+            None,
         ));
         let runtime = AgentRuntime::new(
             Arc::clone(&self.provider),
@@ -845,6 +860,8 @@ pub struct StoreSink {
     memory_generation: Option<u64>,
     active_workspaces: Arc<Mutex<HashSet<String>>>,
     workspace: String,
+    knowledge: Option<Arc<crate::knowledge::KnowledgeStore>>,
+    pending_ask: Mutex<Option<String>>,
     task_counted: std::sync::atomic::AtomicBool,
 }
 
@@ -862,6 +879,7 @@ impl StoreSink {
         memory_generation: Option<u64>,
         active_workspaces: Arc<Mutex<HashSet<String>>>,
         workspace: String,
+        knowledge: Option<Arc<crate::knowledge::KnowledgeStore>>,
     ) -> Self {
         Self {
             session_id,
@@ -874,7 +892,35 @@ impl StoreSink {
             memory_generation,
             active_workspaces,
             workspace,
+            knowledge,
+            pending_ask: Mutex::new(None),
             task_counted: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn capture_knowledge(&self, event: &AgentEvent) {
+        let Some(knowledge) = &self.knowledge else {
+            return;
+        };
+        match event {
+            AgentEvent::ToolStarted { call, .. } if call.tool == "ask_model" => {
+                if let Some(question) = call
+                    .arguments
+                    .get("question")
+                    .and_then(|value| value.as_str())
+                {
+                    *self.pending_ask.lock().unwrap() = Some(question.to_owned());
+                }
+            }
+            AgentEvent::ToolFinished { result, .. }
+                if result.status == nars_agent_ir::ToolStatus::Succeeded =>
+            {
+                let question = self.pending_ask.lock().unwrap().take();
+                if let Some(question) = question {
+                    knowledge.upsert(&question, &result.stdout, now_ms());
+                }
+            }
+            _ => {}
         }
     }
 
@@ -970,6 +1016,7 @@ impl StoreSink {
 
 impl RuntimeSink for StoreSink {
     fn on_event(&self, event: &AgentEvent) {
+        self.capture_knowledge(event);
         match self.store.append(&self.session_id, event.clone(), now_ms()) {
             Ok(envelope) => {
                 self.last_seq.store(envelope.seq, Ordering::Relaxed);
