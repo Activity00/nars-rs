@@ -520,7 +520,19 @@ pub(crate) fn snapshot_of(memory: &crate::Memory, language: &Narsese) -> MemoryS
             .iter()
             .map(|id| id.0)
             .collect(),
-        concepts: memory.concepts().map(ConceptRecord::from).collect(),
+        concepts: {
+            // Defensive: a corrupted or concurrently written memory must not
+            // produce a snapshot that fails to load later.
+            let mut seen = std::collections::HashSet::new();
+            let mut concepts = Vec::new();
+            for concept in memory.concepts() {
+                let record = ConceptRecord::from(concept);
+                if seen.insert(record.term.clone()) {
+                    concepts.push(record);
+                }
+            }
+            concepts
+        },
     }
 }
 
@@ -562,9 +574,10 @@ pub(crate) fn restore_memory(
     );
     for record in &snapshot.concepts {
         let concept = record.to_concept()?;
-        if !memory.insert_restored(&language, concept) {
-            return Err(MemorySnapshotError::DuplicateConcept(record.term.clone()));
-        }
+        // A duplicated term or identifier means the file was written twice or
+        // corrupted; keep the first entry and drop the rest instead of
+        // refusing to start the workspace.
+        let _ = memory.insert_restored(&language, concept);
     }
     Ok(memory)
 }
@@ -731,14 +744,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_concepts() {
+    fn tolerates_duplicate_concepts_and_keeps_the_first() {
         let (language, memory, _) = seeded();
         let mut snapshot = memory.to_snapshot(&language);
         let duplicate = snapshot.concepts[0].clone();
         snapshot.concepts.push(duplicate);
-        assert!(matches!(
-            Memory::from_snapshot(&snapshot),
-            Err(MemorySnapshotError::DuplicateConcept(_))
-        ));
+        let restored = Memory::from_snapshot(&snapshot).expect("loads despite duplicates");
+        assert_eq!(restored.concepts().count(), memory.concepts().count());
     }
 }

@@ -224,6 +224,7 @@ impl Memory {
             return false;
         }
         let slot = self.concepts.len();
+        self.next_concept_id = self.next_concept_id.max(concept.id.0.saturating_add(1));
         self.term_slots.insert(concept.term, slot);
         self.id_slots.insert(concept.id, slot);
         self.inverted_index.add(language, &concept.term, concept.id);
