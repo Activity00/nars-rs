@@ -194,6 +194,12 @@ export default function App() {
     return selected.runs[selected.activeRunId];
   }, [state.selected]);
 
+  const thinking =
+    busy ||
+    run?.status === "planning" ||
+    run?.status === "executing_tool" ||
+    run?.status === "awaiting_approval";
+
   const runOptions = useMemo(() => {
     const selected = state.selected;
     if (!selected) return [];
@@ -409,6 +415,19 @@ export default function App() {
           busyCallId={busyCallId}
           onDecision={(callId, approved) => void decide(callId, approved)}
         />
+
+        {thinking && (
+          <div className="thinking" role="status" aria-live="polite">
+            <span className="thinking-dot" />
+            <span className="thinking-dot" />
+            <span className="thinking-dot" />
+            <span>
+              {run?.status === "awaiting_approval"
+                ? "Waiting for your approval…"
+                : "Agent is thinking…"}
+            </span>
+          </div>
+        )}
 
         <Composer disabled={!selectedId} busy={busy} onSend={send} />
       </main>

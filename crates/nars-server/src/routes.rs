@@ -24,6 +24,7 @@ use crate::state::{AppState, create_session, now_ms};
 pub fn build_router(state: Arc<AppState>) -> Router {
     let protected = Router::new()
         .route("/api/tools", get(tools))
+        .route("/api/fs/dirs", get(crate::fs_browse::list_dirs))
         .route(
             "/api/sessions",
             post(create_session_handler).get(list_sessions),

@@ -221,6 +221,13 @@ impl AppState {
     #[must_use]
     pub fn tool_manifests(&self) -> Vec<ToolManifest> {
         let mut registry = nars_tools::builtin::builtin_registry();
+        if let Err(error) = registry.register(Arc::new(crate::ask_model::AskModelTool::new(
+            Arc::clone(&self.provider),
+            self.config.actor.model.clone(),
+            tokio::runtime::Handle::current(),
+        ))) {
+            tracing::warn!(%error, "failed to register ask_model");
+        }
         for tool in &self.config.extra_tools {
             if let Err(error) = registry.register(Arc::clone(tool)) {
                 tracing::warn!(%error, "failed to register extra tool");
@@ -231,6 +238,13 @@ impl AppState {
 
     fn broker_for(&self, workspace: &Path, policy: Policy) -> Result<Arc<ToolBroker>, ApiError> {
         let mut registry = nars_tools::builtin::builtin_registry();
+        registry
+            .register(Arc::new(crate::ask_model::AskModelTool::new(
+                Arc::clone(&self.provider),
+                self.config.actor.model.clone(),
+                tokio::runtime::Handle::current(),
+            )))
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
         for tool in &self.config.extra_tools {
             registry
                 .register(Arc::clone(tool))

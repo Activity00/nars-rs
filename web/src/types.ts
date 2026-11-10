@@ -313,3 +313,20 @@ export interface ProfileSummary {
   fact_count: number;
   facts: ProfileFact[];
 }
+
+/** One subdirectory offered by the workspace picker. */
+export interface DirEntry {
+  name: string;
+  path: string;
+  hidden: boolean;
+}
+
+/** One directory of subdirectories, plus its navigation anchors. */
+export interface DirListing {
+  path: string;
+  parent?: string | null;
+  root?: string | null;
+  home?: string | null;
+  entries: DirEntry[];
+  truncated: boolean;
+}

@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { SessionMeta, ToolManifest } from "../types";
 import { basename } from "../lib";
+import { FolderIcon, WorkspacePicker, type RecentWorkspace } from "./WorkspacePicker";
 
 interface Props {
   sessions: SessionMeta[];
@@ -32,7 +33,26 @@ export function Sidebar({
   onSaveToken,
 }: Props) {
   const [workspace, setWorkspace] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [tokenDraft, setTokenDraft] = useState(token);
+
+  const recent = useMemo<RecentWorkspace[]>(() => {
+    const latest = new Map<string, { path: string; label: string; at: number }>();
+    for (const session of sessions) {
+      const current = latest.get(session.workspace);
+      if (!current || session.updated_at_ms > current.at) {
+        latest.set(session.workspace, {
+          path: session.workspace,
+          label: session.title || "Untitled",
+          at: session.updated_at_ms,
+        });
+      }
+    }
+    return [...latest.values()]
+      .sort((left, right) => right.at - left.at)
+      .slice(0, 5)
+      .map(({ path, label }) => ({ path, label }));
+  }, [sessions]);
 
   const ids = new Set(sessions.map((session) => session.session_id));
   const children = new Map<string, SessionMeta[]>();
@@ -124,19 +144,29 @@ export function Sidebar({
       </div>
 
       <section className="new-session">
-        <label htmlFor="workspace">Workspace</label>
-        <input
-          id="workspace"
-          placeholder="/absolute/path/to/project"
-          value={workspace}
-          onChange={(event) => setWorkspace(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && workspace.trim()) {
-              onCreate(workspace.trim());
-              setWorkspace("");
-            }
-          }}
-        />
+        <span className="field-label">Workspace</span>
+        <button
+          type="button"
+          className="workspace-trigger"
+          aria-haspopup="dialog"
+          aria-expanded={pickerOpen}
+          onClick={() => setPickerOpen(true)}
+        >
+          <span className="workspace-trigger-icon">
+            <FolderIcon size={13} />
+          </span>
+          <span className="workspace-trigger-text">
+            {workspace ? basename(workspace) : "Choose a folder…"}
+          </span>
+          <span className="workspace-trigger-chevron" aria-hidden="true">
+            ⌄
+          </span>
+        </button>
+        {workspace && (
+          <div className="workspace-chosen mono" title={workspace}>
+            {workspace}
+          </div>
+        )}
         <button
           className="btn primary"
           disabled={!workspace.trim()}
@@ -148,6 +178,18 @@ export function Sidebar({
           New session
         </button>
       </section>
+
+      {pickerOpen && (
+        <WorkspacePicker
+          initialPath={workspace || undefined}
+          recent={recent}
+          onPick={(path) => {
+            setWorkspace(path);
+            setPickerOpen(false);
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
 
       <section className="sessions">
         <h2>Sessions</h2>

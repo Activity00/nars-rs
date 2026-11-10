@@ -1,5 +1,6 @@
 import type {
   CompareResponse,
+  DirListing,
   MemorySummary,
   ProfileSummary,
   RunSummary,
@@ -55,6 +56,10 @@ export const api = {
       "/api/health",
     ),
   tools: () => request<{ tools: unknown[] }>("/api/tools"),
+  browse: (path?: string) =>
+    request<DirListing>(
+      path ? `/api/fs/dirs?path=${encodeURIComponent(path)}` : "/api/fs/dirs",
+    ),
   sessions: () => request<{ sessions: any[] }>("/api/sessions"),
   session: (id: string) => request<SessionDetail>(`/api/sessions/${id}`),
   renameSession: (id: string, title: string) =>

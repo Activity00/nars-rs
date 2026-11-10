@@ -742,6 +742,17 @@ impl SessionActor {
             (candidates, deferred, count)
         };
         dedupe_candidates(&mut candidates);
+        // Cold start: when neither the model nor the plan produced an action,
+        // let NARS ask the model for knowledge instead of stalling.
+        if candidates.is_empty() && self.manifests.contains_key("ask_model") {
+            candidates.push(
+                CandidateAction::new("ask_model")
+                    .with_arguments(serde_json::json!({
+                        "question": self.state.task.goal.description.clone()
+                    }))
+                    .with_confidence(0.3),
+            );
+        }
 
         if candidates.is_empty() {
             if self.plan.is_active() {
