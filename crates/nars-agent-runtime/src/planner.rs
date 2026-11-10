@@ -133,6 +133,8 @@ pub struct NarsPlanner {
     seed: u64,
     decision_count: u32,
     selection: SelectionMode,
+    last_context_key: Option<String>,
+    last_goal: Option<String>,
 }
 
 const MAX_FACT_LOG: usize = 512;
@@ -267,6 +269,8 @@ impl NarsPlanner {
             seed,
             decision_count: 0,
             selection: SelectionMode::Nars,
+            last_context_key: None,
+            last_goal: None,
         })
     }
 
@@ -478,11 +482,23 @@ impl NarsPlanner {
     pub fn decide(
         &mut self,
         step: u32,
+        context_key: &str,
         candidates: &[CandidateAction],
     ) -> Result<NarsDecision, AgentError> {
         self.decision_count = self.decision_count.saturating_add(1);
-        let context = format!("ctx_{}_{}", short_hash(&self.run_key), step);
-        let goal_term = format!("goal_{}_{}", short_hash(&self.run_key), step);
+        let key = atomize(context_key);
+        // Learning targets a stable goal so evidence accumulates; the decision
+        // itself uses a fresh goal so NARS re-fires its cycle every step.
+        let learn_goal = format!("goal_{key}");
+        let context = format!("ctx_{key}_{step}");
+        let goal_term = format!("goal_{key}_{step}");
+        self.last_context_key = Some(context_key.to_owned());
+        self.last_goal = Some(learn_goal.clone());
+        let learned = self
+            .reasoner
+            .rank_goal_operations(&learn_goal)
+            .into_iter()
+            .collect::<BTreeMap<String, f64>>();
 
         self.capture.lock().unwrap().take();
         self.argument_index.lock().unwrap().clear();
@@ -546,7 +562,14 @@ impl NarsPlanner {
 
         let mut seeded = Vec::new();
         for (rank, (candidate_id, candidate, _)) in indexed.iter().enumerate() {
-            match self.seed_candidate(&context, &goal_term, candidate_id, candidate, rank) {
+            match self.seed_candidate(
+                &context,
+                &goal_term,
+                candidate_id,
+                candidate,
+                rank,
+                &learned,
+            ) {
                 Ok(()) => seeded.push(candidate_id.clone()),
                 Err(error) => {
                     tracing::warn!(
@@ -606,7 +629,7 @@ impl NarsPlanner {
                         || "selected by NARS".to_owned(),
                         |candidate| candidate.reason.clone(),
                     );
-                return Ok(NarsDecision {
+                let mut decision = NarsDecision {
                     step,
                     selected: Some(SelectedAction {
                         candidate_id: candidate_id.clone(),
@@ -614,7 +637,7 @@ impl NarsPlanner {
                         arguments: selected_candidate.arguments.clone(),
                         score,
                     }),
-                    scored,
+                    scored: scored.clone(),
                     rationale: format!(
                         "NARS selected `{}` ({candidate_id}) via goal inference; {reason}",
                         captured.tool
@@ -622,7 +645,9 @@ impl NarsPlanner {
                     goal_term,
                     source: DecisionSource::Nars,
                     plan: None,
-                });
+                };
+                self.apply_learned_override(&learned, candidates, &mut decision);
+                return Ok(decision);
             }
         }
 
@@ -641,7 +666,7 @@ impl NarsPlanner {
                     score: candidate.score,
                 })
         });
-        Ok(NarsDecision {
+        let mut decision = NarsDecision {
             step,
             selected,
             scored,
@@ -654,7 +679,9 @@ impl NarsPlanner {
                 DecisionSource::None
             },
             plan: None,
-        })
+        };
+        self.apply_learned_override(&learned, candidates, &mut decision);
+        Ok(decision)
     }
 
     /// Records the outcome of a selected action and emits symbolic facts.
@@ -702,6 +729,10 @@ impl NarsPlanner {
         }
         for fact in &facts {
             self.commit_fact(fact)?;
+        }
+        if let Some(goal) = self.last_goal.clone() {
+            self.reasoner
+                .learn_tool_outcome(&goal, &candidate.tool, success);
         }
         Ok(facts)
     }
@@ -769,6 +800,51 @@ impl NarsPlanner {
         Ok(())
     }
 
+    /// Overrides a selection that stored implication evidence disagrees with.
+    fn apply_learned_override(
+        &self,
+        learned: &BTreeMap<String, f64>,
+        candidates: &[CandidateAction],
+        decision: &mut NarsDecision,
+    ) {
+        let Some(current) = decision.selected.as_ref() else {
+            return;
+        };
+        let current_score = learned.get(&current.tool).copied().unwrap_or(0.5);
+        let mut best: Option<(&CandidateAction, f64)> = None;
+        for candidate in candidates {
+            let score = learned.get(&candidate.tool).copied().unwrap_or(0.5);
+            if best.is_none_or(|(_, best_score)| score > best_score) {
+                best = Some((candidate, score));
+            }
+        }
+        let Some((candidate, score)) = best else {
+            return;
+        };
+        let clearly_worse = current_score < 0.2 && score >= 0.4;
+        if candidate.tool == current.tool || (score <= current_score + 0.1 && !clearly_worse) {
+            return;
+        }
+        let Some(entry) = decision
+            .scored
+            .iter()
+            .find(|scored| scored.tool == candidate.tool)
+        else {
+            return;
+        };
+        let previous = current.tool.clone();
+        decision.selected = Some(SelectedAction {
+            candidate_id: entry.candidate_id.clone(),
+            tool: candidate.tool.clone(),
+            arguments: candidate.arguments.clone(),
+            score: entry.score,
+        });
+        decision.rationale = format!(
+            "NARS outcome memory ranked `{}` over `{previous}`; {}",
+            candidate.tool, decision.rationale
+        );
+    }
+
     fn score_candidate(&self, candidate: &CandidateAction) -> (f64, String) {
         let model_score = candidate.confidence.clamp(0.0, 1.0);
         let mut score = 0.55 * model_score + 0.20;
@@ -825,6 +901,7 @@ impl NarsPlanner {
         candidate_id: &str,
         candidate: &CandidateAction,
         rank: usize,
+        learned: &BTreeMap<String, f64>,
     ) -> Result<(), AgentError> {
         let operator = self
             .reasoner
@@ -855,11 +932,16 @@ impl NarsPlanner {
 
         // Distinct tiny offsets keep ties deterministic without changing the
         // intended ranking.
-        let confidence = (self.score_candidate(candidate).0
-            - f64::from(u32::try_from(rank).unwrap_or(0)) * 0.0001)
-            .clamp(0.05, 0.98);
+        let context_score = self.score_candidate(candidate).0;
+        let expectation = learned
+            .get(&candidate.tool)
+            .copied()
+            .unwrap_or_else(|| 0.5 + 0.2 * (context_score - 0.5));
+        let expectation =
+            (expectation - f64::from(u32::try_from(rank).unwrap_or(0)) * 0.0001).clamp(0.02, 0.98);
+        let frequency = (0.5 + (expectation - 0.5) / 0.9).clamp(0.0, 1.0);
         let sentence = format!(
-            "<({context} &/ <({{SELF}} * {candidate_id}) --> ^{}>) =/> {goal_term}>. {{1.0 {confidence:.4}}}",
+            "<({context} &/ <({{SELF}} * {candidate_id}) --> ^{}>) =/> {goal_term}>. {{{frequency:.4} 0.9}}",
             candidate.tool
         );
         self.reasoner
@@ -913,7 +995,7 @@ mod tests {
                 .with_arguments(json!({"path": "src/lib.rs"}))
                 .with_confidence(0.7),
         ];
-        let decision = planner.decide(1, &candidates).unwrap();
+        let decision = planner.decide(1, "test:stage", &candidates).unwrap();
         assert_eq!(decision.source, DecisionSource::Nars, "{decision:?}");
         assert_eq!(decision.selected.as_ref().unwrap().tool, "search");
     }
@@ -940,7 +1022,7 @@ mod tests {
                 .with_arguments(json!({"path": "src/lib.rs"}))
                 .with_confidence(0.7),
         ];
-        let decision = planner.decide(2, &candidates).unwrap();
+        let decision = planner.decide(2, "test:stage", &candidates).unwrap();
         assert_eq!(
             decision.selected.as_ref().unwrap().tool,
             "read_file",
@@ -984,8 +1066,8 @@ mod tests {
             CandidateAction::new("read_file").with_confidence(0.6),
             CandidateAction::new("search").with_confidence(0.6),
         ];
-        let left_decision = left.decide(1, &candidates).unwrap();
-        let right_decision = right.decide(1, &candidates).unwrap();
+        let left_decision = left.decide(1, "test:stage", &candidates).unwrap();
+        let right_decision = right.decide(1, "test:stage", &candidates).unwrap();
         assert_eq!(left_decision, right_decision);
     }
 
@@ -1011,7 +1093,7 @@ mod tests {
                 .with_arguments(json!({"path": "src/lib.rs"}))
                 .with_confidence(0.7),
         ];
-        let decision = planner.decide(1, &candidates).unwrap();
+        let decision = planner.decide(1, "test:stage", &candidates).unwrap();
         assert_eq!(decision.selected.as_ref().unwrap().tool, "read_file");
     }
 
@@ -1019,9 +1101,53 @@ mod tests {
     fn empty_candidates_produce_no_selection() {
         let mut planner = planner();
         planner.commit_task(&task(), 0.8).unwrap();
-        let decision = planner.decide(1, &[]).unwrap();
+        let decision = planner.decide(1, "test:stage", &[]).unwrap();
         assert!(decision.selected.is_none());
         assert_eq!(decision.source, DecisionSource::None);
+    }
+
+    #[test]
+    fn a_failed_tool_loses_to_another_candidate() {
+        let mut planner = planner();
+        planner.commit_task(&task(), 0.8).unwrap();
+        let candidates = vec![
+            CandidateAction::new("read_file")
+                .with_arguments(json!({"path": "src/lib.rs"}))
+                .with_confidence(0.95),
+            CandidateAction::new("search")
+                .with_arguments(json!({"query": "parser"}))
+                .with_confidence(0.4),
+        ];
+        let first = planner
+            .decide(1, "modify_code:investigate", &candidates)
+            .unwrap();
+        assert_eq!(
+            first
+                .selected
+                .as_ref()
+                .map(|selected| selected.tool.as_str()),
+            Some("read_file"),
+            "{first:?}"
+        );
+
+        let failure = {
+            let mut result = ToolResult::failure(ToolCallId::new(), "boom");
+            result.status = ToolStatus::Failed;
+            result
+        };
+        planner.record_outcome(1, &candidates[0], &failure).unwrap();
+
+        let second = planner
+            .decide(2, "modify_code:investigate", &candidates)
+            .unwrap();
+        assert_eq!(
+            second
+                .selected
+                .as_ref()
+                .map(|selected| selected.tool.as_str()),
+            Some("search"),
+            "the failed tool should lose to the alternative: {second:?}"
+        );
     }
 
     #[test]
@@ -1037,7 +1163,7 @@ mod tests {
                 .with_arguments(json!({"query": "parser"}))
                 .with_confidence(0.95),
         ];
-        let decision = planner.decide(1, &candidates).unwrap();
+        let decision = planner.decide(1, "test:stage", &candidates).unwrap();
         assert_eq!(decision.source, DecisionSource::Baseline, "{decision:?}");
         assert_eq!(
             decision.selected.as_ref().unwrap().candidate_id,

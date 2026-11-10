@@ -738,6 +738,14 @@ fn evaluate(
             metrics.approvals
         ));
     }
+    if let Some(minimum) = expect.get("min_override_rate").and_then(Value::as_f64)
+        && metrics.override_rate < minimum
+    {
+        failures.push(format!(
+            "override rate {:.2} is below the required {minimum:.2}",
+            metrics.override_rate
+        ));
+    }
     if let Some(minimum) = expect.get("min_nars_decisions").and_then(Value::as_u64)
         && u64::from(metrics.decisions) < minimum
     {

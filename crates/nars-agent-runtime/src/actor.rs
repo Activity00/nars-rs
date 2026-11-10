@@ -720,7 +720,14 @@ impl SessionActor {
 
         self.state.step += 1;
         self.plan.set_step(self.state.step);
-        let mut decision = self.planner.decide(self.state.step, &candidates)?;
+        let stage = self
+            .plan
+            .active_stage()
+            .map_or("none", |stage| stage.id.as_str());
+        let context_key = format!("{}:{}", self.state.task.goal.goal_type.atom_suffix(), stage);
+        let mut decision = self
+            .planner
+            .decide(self.state.step, &context_key, &candidates)?;
         decision.plan = Some(self.plan.view(self.state.step));
         if !deferred.is_empty() {
             let stage = self

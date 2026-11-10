@@ -1,9 +1,11 @@
 //! Integrated reasoning runtime owning language, memory, rules, and clock.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
+use crate::Implication;
 use crate::config::{
     ANTICIPATION_CONFIDENCE, ANTICIPATION_THRESHOLD, BELIEF_CONCEPT_MATCH_TARGET,
     BELIEF_LAST_USED_TOLERANCE, CONCEPTS_MAX, CONDITION_THRESHOLD, CYCLING_BELIEF_EVENTS_MAX,
@@ -174,6 +176,110 @@ impl Reasoner {
         let now = self.current_time;
         let language = &self.language;
         self.memory.prune_stale(language, now)
+    }
+
+    /// Stores a learned `<precondition =/> goal>` implication directly in the
+    /// consequence concept's precondition table.
+    ///
+    /// The normal sentence path drops operation-statement preconditions before
+    /// they reach that table, so learned outcomes are written explicitly here
+    /// with a valid source concept.
+    pub fn store_implication_sentence(&mut self, source: &str) -> bool {
+        let Ok(sentence) = self.language.parse_sentence(source) else {
+            return false;
+        };
+        let term = sentence.term;
+        let precondition = term.extract_subterm(1);
+        let conclusion = term.extract_subterm(2);
+        if precondition.is_empty() || conclusion.is_empty() {
+            return false;
+        }
+        let now = self.current_time;
+        let slot = self.operation_slot_for_implication(&term);
+        let event = self
+            .events
+            .input_event(term, EventType::Belief, sentence.truth, 0.0, now);
+        let source_term = self.language.precondition_without_operation(&precondition);
+        let language = &self.language;
+        let memory = &mut self.memory;
+        let Some(source_id) = memory.conceptualize(language, source_term, now) else {
+            return false;
+        };
+        let Some(target_id) = memory.conceptualize(language, conclusion, now) else {
+            return false;
+        };
+        let implication = Implication {
+            term,
+            truth: event.truth,
+            stamp: event.stamp,
+            occurrence_time_offset: 0.0,
+            source_concept_id: Some(source_id.0),
+            creation_time: event.creation_time,
+        };
+        let Some(target) = memory.by_id_mut(target_id) else {
+            return false;
+        };
+        target.precondition_beliefs[slot.min(OPERATIONS_MAX)]
+            .add_and_revise(language, implication)
+            .is_some()
+    }
+
+    /// Records how a tool fared for a goal, as a direct memory implication.
+    pub fn learn_tool_outcome(&mut self, goal: &str, tool: &str, success: bool) -> bool {
+        let action = format!("act_{tool}");
+        let sentence = format!(
+            "<(({{SELF}} * {action}) --> ^{tool}) =/> {goal}>. {{{} 0.9}}",
+            if success { "1.0" } else { "0.0" }
+        );
+        self.store_implication_sentence(&sentence)
+    }
+
+    /// Ranks operations by learned implication expectation for `goal`.
+    pub fn rank_goal_operations(&mut self, goal: &str) -> Vec<(String, f64)> {
+        let Ok(goal_term) = self.language.parse_term(goal) else {
+            return Vec::new();
+        };
+        let Some(concept) = self.memory.find(&goal_term) else {
+            return Vec::new();
+        };
+        let mut best: BTreeMap<String, f64> = BTreeMap::new();
+        let implications = concept
+            .precondition_beliefs
+            .iter()
+            .flat_map(|table| table.iter())
+            .chain(concept.implication_links.iter());
+        for implication in implications {
+            let precondition = implication.term.extract_subterm(1);
+            let seeded = precondition.atoms().iter().any(|atom| {
+                *atom != crate::term::ATOM_FREE
+                    && self
+                        .language
+                        .atom_name(*atom)
+                        .is_some_and(|name| name.starts_with("ctx_"))
+            });
+            if seeded {
+                continue;
+            }
+            let mut components = Vec::new();
+            flatten_sequence(&self.language, precondition, &mut components);
+            for component in components {
+                let Some(atom) = self.language.operation_atom(&component) else {
+                    continue;
+                };
+                let Some(name) = self.language.atom_name(atom) else {
+                    continue;
+                };
+                let Some(tool) = name.strip_prefix('^') else {
+                    continue;
+                };
+                let score = implication.truth.expectation();
+                let entry = best.entry(tool.to_owned()).or_insert(f64::MIN);
+                *entry = entry.max(score);
+            }
+        }
+        let mut ranked = best.into_iter().collect::<Vec<_>>();
+        ranked.sort_by(|left, right| right.1.total_cmp(&left.1));
+        ranked
     }
 
     /// The atom table shared by every term in this runtime.
@@ -3559,6 +3665,23 @@ impl Default for Reasoner {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn learned_outcomes_are_visible_to_ranking() {
+        let mut reasoner = Reasoner::new().expect("reasoner");
+        reasoner
+            .add_operation("^read_file", |_| OperationFeedback::default())
+            .expect("operation");
+        reasoner
+            .add_operation("^search", |_| OperationFeedback::default())
+            .expect("operation");
+        assert!(reasoner.learn_tool_outcome("goal_test", "read_file", false));
+        assert!(reasoner.learn_tool_outcome("goal_test", "search", true));
+        let ranked = reasoner.rank_goal_operations("goal_test");
+        assert_eq!(ranked.first().map(|entry| entry.0.as_str()), Some("search"));
+    }
+
     use std::sync::Arc;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
