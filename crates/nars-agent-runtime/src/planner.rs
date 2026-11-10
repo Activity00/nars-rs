@@ -382,12 +382,10 @@ impl NarsPlanner {
     /// that belief instead of counting observations in Rust.
     fn seed_stage_rules(&mut self) {
         let rules = [
+            // Investigation is only complete once content was actually read;
+            // listing or searching is preparation, not evidence.
             ("tool_read_file_observed_success", "investigate"),
             ("tool_read_file_outcome_success", "investigate"),
-            ("tool_list_files_observed_success", "investigate"),
-            ("tool_list_files_outcome_success", "investigate"),
-            ("tool_search_observed_success", "investigate"),
-            ("tool_search_outcome_success", "investigate"),
             ("tool_apply_patch_observed_success", "change"),
             ("tool_apply_patch_outcome_success", "change"),
             ("tool_cargo_test_observed_success", "verify"),
@@ -402,6 +400,43 @@ impl NarsPlanner {
                 .reasoner
                 .add_sentence(&format!("<{fact} ==> stage_{stage}_satisfied>."));
         }
+    }
+
+    /// Goal type refined by the model at task commit, when available.
+    #[must_use]
+    pub const fn goal_type(&self) -> Option<GoalType> {
+        self.task_goal_type
+    }
+
+    /// Current stage derived from NARS beliefs instead of Rust counters.
+    pub fn active_stage_name(&mut self, goal_type: GoalType) -> &'static str {
+        let order: &[&str] = match goal_type {
+            GoalType::ModifyCode | GoalType::Refactor | GoalType::CreateFiles => {
+                &["investigate", "change", "verify", "answer"]
+            }
+            GoalType::Investigate | GoalType::AnswerQuestion => &["investigate", "answer"],
+            GoalType::RunTests => &["verify", "answer"],
+            GoalType::Other => &[],
+        };
+        for stage in order {
+            if *stage == "answer" {
+                return "answer";
+            }
+            let done = self
+                .reasoner
+                .belief_expectation(&format!("stage_{stage}_satisfied"))
+                .is_some_and(|expectation| expectation > 0.5);
+            if !done {
+                return stage;
+            }
+        }
+        "answer"
+    }
+
+    /// Retracts the change and verify stages after a failed verification.
+    pub fn retract_after_failed_verification(&mut self) {
+        self.reasoner.retract_belief("stage_verify_satisfied");
+        self.reasoner.retract_belief("stage_change_satisfied");
     }
 
     /// Whether NARS believes every stage required for this goal type is done.

@@ -36,7 +36,27 @@ Planner 在构造时种下静态规则：
 
 工具观察/结果事实本来就会写入记忆，前向链因而推出 `stage_<name>_satisfied` 信念。`stages_satisfied(goal_type)` 按目标类型查询这些信念的期望值，全部 > 0.5 才算完成。
 
-### 3. 是否收尾由 NARS 决定
+### 3. 阶段序列也由 NARS 决定
+
+`active_stage_name(goal_type)` 按阶段顺序查询 `stage_*_satisfied`，返回第一个未满足的阶段；
+`TaskPlan` 只保留阶段模板（工具 allowlist、指引文本），`set_active_by_id` 把 NARS 的决定写回
+视图与过滤器。
+
+当 NARS 判断进入 `answer` 阶段而模型仍在提案动作时，运行时直接发起一次 `Finalize` 调用，
+让模型只负责写答案，不再执行多余动作。
+
+### 4. 验证失败回退到 change
+
+`cargo_test`/`cargo_check`/`run_command` 失败时，运行时：
+
+1. `Reasoner::retract_belief` 撤回 `stage_change_satisfied` 与 `stage_verify_satisfied`；
+2. 清空 change 阶段的已用工具记录；
+3. 立即把阶段切回 `change`。
+
+否则“测试失败但代码没改，换个验证命令再跑”会掩盖真正的失败。重新打补丁成功后，成功事实会
+经由前向链重新断言 change 完成。
+
+### 5. 是否收尾由 NARS 决定
 
 `handle_final_answer` 不再调用 `plan.can_finish()`，改为询问 `planner.stages_satisfied(...)`：
 
@@ -66,4 +86,5 @@ Planner 在构造时种下静态规则：
 
 - `implication_forward_chains_a_belief`：`<a ==> b>` + `a` 推出 `b`；
 - `stage_rule_derives_satisfaction`：工具成功事实推出 `stage_change_satisfied`；
+- `verification_failure_returns_to_change_and_switches_tool`：验证失败后阶段回退到 change、重新打补丁；
 - 评测 8/8、基线 7/8、replay hash 一致。

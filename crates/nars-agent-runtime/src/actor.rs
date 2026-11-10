@@ -525,6 +525,18 @@ impl SessionActor {
             artifacts: result.artifacts.clone(),
         };
         self.planner.record_observation(&observation)?;
+        if !result.is_success()
+            && matches!(
+                pending.call.tool.as_str(),
+                "cargo_test" | "cargo_check" | "run_command"
+            )
+        {
+            // Verification failed: drop back to the change stage so the model
+            // can fix the code, not just retry another verifier.
+            self.planner.retract_after_failed_verification();
+            self.plan.clear_progress("change");
+            self.plan.set_active_by_id("change");
+        }
         self.state.push_observation(observation.clone());
 
         let mut output = ActorOutput::default()
@@ -682,6 +694,25 @@ impl SessionActor {
             ));
         }
 
+        let goal_type = self
+            .planner
+            .goal_type()
+            .unwrap_or(self.state.task.goal.goal_type);
+        let nars_stage = self.planner.active_stage_name(goal_type);
+        self.plan.set_active_by_id(nars_stage);
+        if nars_stage == "answer" && self.plan.is_active() {
+            // NARS believes the work is done; ask the model to render the
+            // answer instead of executing another action.
+            let plan_view = self.plan.view(self.state.step);
+            let command = self.begin_model_call(
+                ModelPurpose::Finalize,
+                self.state.step,
+                prompt::finalize_message(&self.state, Some(&plan_view)),
+                &mut output,
+            );
+            output.commands.push(command);
+            return Ok(output);
+        }
         let (mut candidates, deferred) = self.plan.filter(&proposal.candidate_actions);
         let model_candidate_count = candidates.len();
         candidates.extend(self.plan.fallback_candidates(&self.state.task));
@@ -826,9 +857,11 @@ impl SessionActor {
     }
 
     fn handle_final_answer(&mut self, answer: FinalAnswer, mut output: ActorOutput) -> ActorOutput {
-        let stages_done = self
+        let goal_type = self
             .planner
-            .stages_satisfied(self.state.task.goal.goal_type);
+            .goal_type()
+            .unwrap_or(self.state.task.goal.goal_type);
+        let stages_done = self.planner.stages_satisfied(goal_type);
         if !stages_done && self.finish_deferrals_left > 0 {
             self.finish_deferrals_left -= 1;
             let guidance = self.plan.stage_guidance(&self.state.task);
@@ -945,6 +978,16 @@ impl SessionActor {
             artifacts: result.artifacts.clone(),
         };
         self.planner.record_observation(&observation)?;
+        if !result.is_success()
+            && matches!(
+                pending.call.tool.as_str(),
+                "cargo_test" | "cargo_check" | "run_command"
+            )
+        {
+            self.planner.retract_after_failed_verification();
+            self.plan.clear_progress("change");
+            self.plan.set_active_by_id("change");
+        }
         self.state.push_observation(observation.clone());
         self.state.touch((self.config.clock)());
         output.events.push(AgentEvent::ToolFinished {

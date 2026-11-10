@@ -284,6 +284,22 @@ impl Reasoner {
         ranked
     }
 
+    /// Retracts a belief so it no longer supports derived decisions.
+    ///
+    /// Used when later evidence contradicts an earlier conclusion, e.g. a
+    /// failed verification invalidating the change stage.
+    pub fn retract_belief(&mut self, term: &str) -> bool {
+        let Ok(term) = self.language.parse_term(term) else {
+            return false;
+        };
+        let Some(concept) = self.memory.find_mut(&term) else {
+            return false;
+        };
+        concept.belief.truth = Truth::default();
+        concept.belief_spike.truth = Truth::default();
+        true
+    }
+
     /// Expectation of a stored belief, by rendered term text.
     pub fn belief_expectation(&mut self, term: &str) -> Option<f64> {
         let term = self.language.parse_term(term).ok()?;

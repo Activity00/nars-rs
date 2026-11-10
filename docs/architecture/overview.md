@@ -222,8 +222,8 @@ usage。Run 开始时从快照恢复 Reasoner，结束时把更新后的记忆�
 
 工具成败会写成 `<操作 =/> 目标>` 蕴含，进入目标概念的 `precondition_beliefs`；
 NARS 据此排序候选，证据与模型偏好冲突时可以覆盖模型选择。阶段完成则由前向链
-推出：工具成功事实 + 阶段规则 ⇒ `stage_<name>_satisfied`，运行时查询该信念决定
-是否接受最终答案。评测输出 override 率、NARS pickup 与 model-top 基线。详见
+推出：工具成功事实 + 阶段规则 ⇒ `stage_<name>_satisfied`，当前阶段、是否接受最终答案
+都由这些信念决定；验证失败会撤回 change/verify 的满足信念，把阶段退回 change。评测输出 override 率、NARS pickup 与 model-top 基线。详见
 [ADR 0015](../decisions/0015-decision-learning.md) 与
 [ADR 0016](../decisions/0016-forward-chaining.md)。
 

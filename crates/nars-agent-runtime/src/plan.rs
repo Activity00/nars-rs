@@ -368,6 +368,29 @@ impl TaskPlan {
             .unwrap_or_default()
     }
 
+    /// Sets the active stage by identifier, as decided by NARS.
+    pub fn set_active_by_id(&mut self, id: &str) {
+        if let Some(index) = self.stages.iter().position(|stage| stage.id == id) {
+            for (position, stage) in self.stages.iter_mut().enumerate() {
+                stage.status = match position.cmp(&index) {
+                    std::cmp::Ordering::Less => StageStatus::Satisfied,
+                    std::cmp::Ordering::Equal => StageStatus::Active,
+                    std::cmp::Ordering::Greater => StageStatus::Pending,
+                };
+            }
+            self.active = Some(index);
+        }
+    }
+
+    /// Clears progress for a stage that has to be re-entered.
+    pub fn clear_progress(&mut self, stage_id: &str) {
+        if let Some(stage) = self.stages.iter_mut().find(|stage| stage.id == stage_id) {
+            stage.progressed_tools.clear();
+            stage.attempts = 0;
+            stage.failures = 0;
+        }
+    }
+
     /// Adds discovered files to the working memory.
     pub fn note_files(&mut self, files: impl IntoIterator<Item = String>) {
         for file in files {
