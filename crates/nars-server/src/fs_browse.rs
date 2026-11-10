@@ -165,7 +165,7 @@ fn parent_of(directory: &Path, root: Option<&Path>) -> Option<String> {
 fn home_dir() -> Option<PathBuf> {
     ["HOME", "USERPROFILE"]
         .iter()
-        .find_map(|key| std::env::var_os(key))
+        .find_map(std::env::var_os)
         .map(PathBuf::from)
         .filter(|path| path.is_dir())
 }

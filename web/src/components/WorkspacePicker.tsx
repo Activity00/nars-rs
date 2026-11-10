@@ -76,21 +76,37 @@ export function WorkspacePicker({ initialPath, recent, onPick, onClose }: Props)
   const [active, setActive] = useState(-1);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const requestId = useRef(0);
 
   const load = useCallback(async (path?: string) => {
+    const ticket = ++requestId.current;
     setLoading(true);
     setError(undefined);
     try {
       const next = await api.browse(path);
+      if (ticket !== requestId.current) return;
       setListing(next);
-      setFilter("");
       setActive(-1);
     } catch (cause) {
+      if (ticket !== requestId.current) return;
       setError(message(cause));
+      // Put the attempted destination back so it can be corrected or used as-is.
+      if (path) setFilter(path);
     } finally {
-      setLoading(false);
+      if (ticket === requestId.current) setLoading(false);
     }
   }, []);
+
+  // Navigating clears the filter up front, but loading a listing never does:
+  // the user may already be typing the next path while a request is in flight.
+  const navigate = useCallback(
+    (path?: string) => {
+      setFilter("");
+      setActive(-1);
+      void load(path);
+    },
+    [load],
+  );
 
   useEffect(() => {
     void load(initialPath);
@@ -147,7 +163,7 @@ export function WorkspacePicker({ initialPath, recent, onPick, onClose }: Props)
         case "ArrowLeft":
           if (!filter) {
             event.preventDefault();
-            if (listing?.parent) void load(listing.parent);
+            if (listing?.parent) navigate(listing.parent);
           }
           return;
         case "Enter": {
@@ -159,13 +175,13 @@ export function WorkspacePicker({ initialPath, recent, onPick, onClose }: Props)
           }
           if (looksLikePath(typed)) {
             event.preventDefault();
-            void load(typed);
+            navigate(typed);
             return;
           }
           const row = rows[active];
           if (row) {
             event.preventDefault();
-            void load(row.entry.path);
+            navigate(row.entry.path);
             return;
           }
           event.preventDefault();
@@ -175,7 +191,7 @@ export function WorkspacePicker({ initialPath, recent, onPick, onClose }: Props)
         default:
       }
     },
-    [active, choose, filter, listing, load, onClose, rows, step],
+    [active, choose, filter, listing, navigate, onClose, rows, step],
   );
 
   const crumbs = trail(listing?.path ?? "");
@@ -233,7 +249,7 @@ export function WorkspacePicker({ initialPath, recent, onPick, onClose }: Props)
               className="picker-nav"
               title="Parent folder (←)"
               disabled={!listing?.parent}
-              onClick={() => listing?.parent && void load(listing.parent)}
+              onClick={() => listing?.parent && navigate(listing.parent)}
             >
               ↑
             </button>
@@ -241,7 +257,7 @@ export function WorkspacePicker({ initialPath, recent, onPick, onClose }: Props)
               className="picker-nav"
               title="Home folder"
               disabled={!listing?.home || listing.home === listing.path}
-              onClick={() => listing?.home && void load(listing.home)}
+              onClick={() => listing?.home && navigate(listing.home)}
             >
               Home
             </button>
@@ -272,7 +288,7 @@ export function WorkspacePicker({ initialPath, recent, onPick, onClose }: Props)
                 <button
                   className={`picker-crumb${index === crumbs.length - 1 ? " current" : ""}`}
                   disabled={index === crumbs.length - 1}
-                  onClick={() => void load(crumb.path)}
+                  onClick={() => navigate(crumb.path)}
                 >
                   {crumb.label}
                 </button>
@@ -305,7 +321,7 @@ export function WorkspacePicker({ initialPath, recent, onPick, onClose }: Props)
                   aria-selected={index === active}
                   className={`picker-row${index === active ? " active" : ""}`}
                   onMouseEnter={() => setActive(index)}
-                  onClick={() => void load(row.entry.path)}
+                  onClick={() => navigate(row.entry.path)}
                 >
                   <span className="picker-row-icon">
                     <FolderIcon size={13} />
