@@ -76,19 +76,45 @@ impl KnowledgeStore {
     /// Returns the stored answer for a question, if any.
     #[must_use]
     pub fn answer(&self, question: &str) -> Option<String> {
-        let question = normalize(question);
         self.load()
             .into_iter()
             .rev()
-            .find(|entry| {
-                entry.question == question
-                    || (entry.question.len() >= 6
-                        && question.len() >= 6
-                        && (entry.question.contains(&question)
-                            || question.contains(&entry.question)))
-            })
+            .find(|entry| matches(&entry.question, question))
             .map(|entry| entry.answer)
     }
+
+    /// Returns up to `limit` entries whose question matches, newest first.
+    #[must_use]
+    pub fn matching(&self, question: &str, limit: usize) -> Vec<KnowledgeEntry> {
+        let mut entries = self
+            .load()
+            .into_iter()
+            .rev()
+            .filter(|entry| matches(&entry.question, question))
+            .take(limit)
+            .collect::<Vec<_>>();
+        entries.reverse();
+        entries
+    }
+}
+
+/// Whether a stored question covers a new one.
+///
+/// Containment only applies once both sides carry at least six characters;
+/// otherwise "what" would match "what is this project".
+#[must_use]
+pub fn matches(stored: &str, question: &str) -> bool {
+    let stored = normalize(stored);
+    let question = normalize(question);
+    if stored.is_empty() || question.is_empty() {
+        return false;
+    }
+    if stored == question {
+        return true;
+    }
+    stored.len() >= 6
+        && question.len() >= 6
+        && (stored.contains(&question) || question.contains(&stored))
 }
 
 /// Normalizes a question for matching.

@@ -329,12 +329,19 @@ impl AppState {
         }
         let knowledge = Arc::new(crate::knowledge::KnowledgeStore::for_workspace(&workspace));
         let entries = knowledge.load();
-        if !entries.is_empty() {
-            task.memory_brief.extend(
-                entries.iter().rev().take(20).rev().map(|entry| {
-                    format!("Known answer — Q: {} A: {}", entry.question, entry.answer)
-                }),
+        // Only inject answers that plausibly cover this question, and keep the
+        // prompt budget bounded: long answers are truncated.
+        let relevant = knowledge.matching(&task.user_message, 3);
+        if !relevant.is_empty() {
+            task.memory_brief.push(
+                "Known answers from earlier model calls (treat as stale if the repo changed):"
+                    .to_owned(),
             );
+            for entry in &relevant {
+                let answer = entry.answer.chars().take(600).collect::<String>();
+                task.memory_brief
+                    .push(format!("Q: {}\nA: {answer}", entry.question));
+            }
         }
         let profile_facts = self.load_profile_facts();
         if !self.claim_workspace(&workspace_text) {
