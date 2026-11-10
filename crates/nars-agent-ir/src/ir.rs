@@ -105,6 +105,12 @@ pub struct GoalSpec {
     /// omit it when a target and goal type are present; the runtime fills it in.
     #[serde(default)]
     pub description: String,
+    /// Optional Narsese translation of the goal, e.g. `(search alpha)`.
+    ///
+    /// When present, NARS derives the concrete action and arguments from this
+    /// term instead of relying on the model's candidate list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub narsese: Option<String>,
 }
 
 impl GoalSpec {
@@ -114,8 +120,16 @@ impl GoalSpec {
         Self {
             goal_type,
             target: None,
+            narsese: None,
             description: description.into(),
         }
+    }
+
+    /// Attaches a Narsese translation of the goal.
+    #[must_use]
+    pub fn with_narsese(mut self, narsese: impl Into<String>) -> Self {
+        self.narsese = Some(narsese.into());
+        self
     }
 
     /// Attaches a target path.

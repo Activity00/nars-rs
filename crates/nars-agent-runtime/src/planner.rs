@@ -402,6 +402,31 @@ impl NarsPlanner {
         }
     }
 
+    /// Derives a single action and its string argument from a Narsese goal.
+    ///
+    /// Recognises `(tool arg)` where both parts are atoms, e.g. `(search alpha)`.
+    /// This is the first slice of NARS-owned action derivation: the model only
+    /// translates the request, the operation comes from the goal itself.
+    pub fn derive_action(&mut self, goal: &str) -> Option<(String, String)> {
+        let term = self.reasoner.language_mut().parse_term(goal).ok()?;
+        let tool_term = term.extract_subterm(1);
+        let arg_term = term.extract_subterm(2);
+        let tool = self
+            .reasoner
+            .language()
+            .atom_name(tool_term.root())?
+            .to_owned();
+        if !self.tool_names.contains(&tool) {
+            return None;
+        }
+        let arg = match self.reasoner.language().atom_name(arg_term.root()) {
+            Some(name) => name.to_owned(),
+            None if !arg_term.is_empty() => self.reasoner.language().format_term(&arg_term),
+            None => return None,
+        };
+        Some((tool, arg))
+    }
+
     /// Goal type refined by the model at task commit, when available.
     #[must_use]
     pub const fn goal_type(&self) -> Option<GoalType> {

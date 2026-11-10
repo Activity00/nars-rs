@@ -307,6 +307,11 @@ impl Reasoner {
         (concept.belief.truth.confidence > 0.0).then(|| concept.belief.truth.expectation())
     }
 
+    /// Mutable atom table, for interning terms derived from runtime state.
+    pub fn language_mut(&mut self) -> &mut Narsese {
+        &mut self.language
+    }
+
     /// The atom table shared by every term in this runtime.
     #[must_use]
     pub const fn language(&self) -> &Narsese {

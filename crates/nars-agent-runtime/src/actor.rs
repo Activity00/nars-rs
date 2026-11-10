@@ -713,9 +713,34 @@ impl SessionActor {
             output.commands.push(command);
             return Ok(output);
         }
-        let (mut candidates, deferred) = self.plan.filter(&proposal.candidate_actions);
-        let model_candidate_count = candidates.len();
-        candidates.extend(self.plan.fallback_candidates(&self.state.task));
+        // If the model translated the goal into Narsese, let NARS derive the
+        // operation and its argument instead of trusting the candidate list.
+        let derived = proposal
+            .goal
+            .narsese
+            .as_deref()
+            .and_then(|narsese| self.planner.derive_action(narsese))
+            .and_then(|(tool, argument)| {
+                if !self.plan.allows(&tool) {
+                    return None;
+                }
+                let manifest = self.manifests.get(&tool)?;
+                let field = first_string_property(&manifest.input_schema)?;
+                Some(
+                    CandidateAction::new(tool)
+                        .with_arguments(serde_json::json!({ field: argument }))
+                        .with_confidence(0.9),
+                )
+            });
+
+        let (mut candidates, deferred, model_candidate_count) = if let Some(action) = derived {
+            (vec![action], Vec::new(), 0)
+        } else {
+            let (mut candidates, deferred) = self.plan.filter(&proposal.candidate_actions);
+            let count = candidates.len();
+            candidates.extend(self.plan.fallback_candidates(&self.state.task));
+            (candidates, deferred, count)
+        };
         dedupe_candidates(&mut candidates);
 
         if candidates.is_empty() {
@@ -1071,6 +1096,15 @@ impl SessionActor {
     fn validation_context(&self) -> ValidationContext {
         ValidationContext::new(self.manifests.keys().cloned())
     }
+}
+
+fn first_string_property(schema: &serde_json::Value) -> Option<String> {
+    schema
+        .get("properties")?
+        .as_object()?
+        .iter()
+        .find(|(_, value)| value.get("type").and_then(serde_json::Value::as_str) == Some("string"))
+        .map(|(name, _)| name.clone())
 }
 
 fn dedupe_candidates(candidates: &mut Vec<CandidateAction>) {

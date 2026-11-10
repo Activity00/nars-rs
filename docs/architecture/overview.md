@@ -225,7 +225,9 @@ NARS 据此排序候选，证据与模型偏好冲突时可以覆盖模型选择
 推出：工具成功事实 + 阶段规则 ⇒ `stage_<name>_satisfied`，当前阶段、是否接受最终答案
 都由这些信念决定；验证失败会撤回 change/verify 的满足信念，把阶段退回 change。评测输出 override 率、NARS pickup 与 model-top 基线。详见
 [ADR 0015](../decisions/0015-decision-learning.md) 与
-[ADR 0016](../decisions/0016-forward-chaining.md)。
+[ADR 0016](../decisions/0016-forward-chaining.md)。目标若带有 Narsese 翻译，
+NARS 可直接推出 `(tool * arg)` 形式的操作并执行，模型的候选列表被忽略；
+见 [ADR 0017](../decisions/0017-narsese-goal-actions.md)。
 
 ## 7.6 跨 Run 上下文
 

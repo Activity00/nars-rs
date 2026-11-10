@@ -710,3 +710,46 @@ async fn retries_when_the_model_replies_without_json() {
     assert!(provider.calls.load(Ordering::SeqCst) >= 2);
     assert!(*provider.saw_repair.lock().unwrap());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nars_derives_action_from_a_translated_goal() {
+    let dir = TempDir::new().unwrap();
+    write_crate(&dir);
+    std::fs::write(dir.path().join("alpha"), "alpha\n").unwrap();
+
+    let mut proposal_ir = proposal("list_files", json!({"path": "."}), 0.9);
+    if let AgentIr::TaskProposal(ref mut proposal) = proposal_ir {
+        proposal.goal =
+            GoalSpec::new(GoalType::Other, "read alpha").with_narsese("(read_file * alpha)");
+        proposal.candidate_actions.clear();
+    }
+    let (runtime, _scripted, _sink) = runtime(
+        &dir,
+        vec![proposal_ir, final_answer()],
+        ApprovalMode::AutoApprove,
+    );
+    let task = TaskSpec::new(
+        GoalSpec::new(GoalType::Other, "read alpha"),
+        dir.path().display().to_string(),
+        "read alpha",
+    );
+    let handle = runtime.start(SessionId::new(), task).unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(30), handle.wait()).await;
+
+    let state = handle.state();
+    assert_eq!(state.status, RunStatus::Completed, "{:?}", state.error);
+    let tools = state
+        .tool_calls
+        .iter()
+        .map(|call| call.tool.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(tools, ["read_file"]);
+    assert_eq!(state.tool_calls[0].arguments, json!({"path": "alpha"}));
+    assert!(
+        state.decisions[0]
+            .selected
+            .as_ref()
+            .is_some_and(|selected| !selected.model_proposed),
+        "the action should be NARS-derived, not model-proposed"
+    );
+}
