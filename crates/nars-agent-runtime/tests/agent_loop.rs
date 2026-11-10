@@ -627,3 +627,86 @@ async fn generic_run_command_verifies_a_non_rust_workspace() {
         "const value = 'beta';\n"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn retries_when_the_model_replies_without_json() {
+    struct Flaky {
+        calls: AtomicU64,
+        saw_repair: Mutex<bool>,
+    }
+
+    #[async_trait]
+    impl ModelProvider for Flaky {
+        fn name(&self) -> &str {
+            "flaky"
+        }
+
+        async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            if call == 0 {
+                return Err(ModelError::invalid_output(
+                    "no JSON object found in response",
+                ));
+            }
+            if request
+                .messages
+                .iter()
+                .any(|message| message.content.contains("was not a JSON object"))
+            {
+                *self.saw_repair.lock().unwrap() = true;
+            }
+            Ok(ModelResponse {
+                ir: AgentIr::FinalAnswer(FinalAnswer {
+                    text: "ok".to_owned(),
+                    success: true,
+                    artifacts: Vec::new(),
+                }),
+                usage: Default::default(),
+                raw: String::new(),
+                provider: "flaky".to_owned(),
+                latency_ms: 0,
+            })
+        }
+    }
+
+    let workspace = TempDir::new().unwrap();
+    write_crate(&workspace);
+    let broker = Arc::new(
+        ToolBroker::with_builtin_tools(
+            workspace.path(),
+            Policy::new(PolicyConfig {
+                mode: ApprovalMode::AutoApprove,
+                ..PolicyConfig::default()
+            }),
+        )
+        .unwrap(),
+    );
+    let provider = Arc::new(Flaky {
+        calls: AtomicU64::new(0),
+        saw_repair: Mutex::new(false),
+    });
+    let runtime = AgentRuntime::new(
+        Arc::clone(&provider) as Arc<dyn ModelProvider>,
+        broker,
+        Arc::new(CollectSink::default()),
+        RuntimeConfig {
+            actor: ActorConfig {
+                model: "flaky".to_owned(),
+                seed: 7,
+                ..ActorConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+    );
+    let task = TaskSpec::new(
+        GoalSpec::new(GoalType::Investigate, "say hi"),
+        workspace.path().display().to_string(),
+        "say hi",
+    );
+    let handle = runtime.start(SessionId::new(), task).unwrap();
+    handle.wait().await;
+
+    assert_eq!(handle.state().status, RunStatus::Completed);
+    assert!(provider.calls.load(Ordering::SeqCst) >= 2);
+    assert!(*provider.saw_repair.lock().unwrap());
+}

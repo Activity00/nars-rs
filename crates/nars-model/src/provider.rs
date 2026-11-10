@@ -230,11 +230,23 @@ pub async fn complete_with_retry(
 ) -> Result<ModelResponse, ModelError> {
     let attempts = config.max_attempts.max(1);
     let mut last_error = None;
+    let mut request = request;
     for attempt in 0..attempts {
         match provider.complete(request.clone()).await {
             Ok(response) => return Ok(response),
             Err(error) => {
                 let retryable = error.retryable;
+                // Models occasionally answer conversationally instead of with
+                // the required JSON object. Retrying the identical prompt tends
+                // to reproduce it, so ask explicitly for JSON on the next try.
+                if error.message.contains("invalid structured output") {
+                    request.messages.push(ModelMessage::user(
+                        "Your previous reply was not a JSON object and was rejected. Reply with \
+                         exactly one Agent IR JSON object and nothing else: no prose, no markdown \
+                         fences. Even for greetings or questions about yourself, use a \
+                         final_answer inside the JSON object.",
+                    ));
+                }
                 last_error = Some(error);
                 if !retryable || attempt + 1 == attempts {
                     break;
@@ -256,6 +268,64 @@ mod tests {
         let request = ModelRequest::new("m", vec![ModelMessage::user("hi")]);
         assert!(request.temperature < 0.5);
         assert_eq!(request.max_tokens, 4096);
+    }
+
+    #[tokio::test]
+    async fn invalid_output_is_retried_with_a_json_reminder() {
+        struct Flaky {
+            calls: std::sync::atomic::AtomicU32,
+        }
+
+        #[async_trait::async_trait]
+        impl ModelProvider for Flaky {
+            fn name(&self) -> &str {
+                "flaky"
+            }
+
+            async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
+                let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if call == 0 {
+                    return Err(ModelError::invalid_output(
+                        "no JSON object found in response",
+                    ));
+                }
+                assert!(
+                    request
+                        .messages
+                        .iter()
+                        .any(|message| message.content.contains("was not a JSON object")),
+                    "retry should carry a repair instruction"
+                );
+                Ok(ModelResponse {
+                    ir: nars_agent_ir::AgentIr::FinalAnswer(nars_agent_ir::FinalAnswer {
+                        text: "ok".to_owned(),
+                        success: true,
+                        artifacts: Vec::new(),
+                    }),
+                    usage: TokenUsage::default(),
+                    raw: String::new(),
+                    provider: "flaky".to_owned(),
+                    latency_ms: 0,
+                })
+            }
+        }
+
+        let provider = Flaky {
+            calls: std::sync::atomic::AtomicU32::new(0),
+        };
+        let request = ModelRequest::new("m", vec![ModelMessage::user("hi")]);
+        let response = complete_with_retry(
+            &provider,
+            request,
+            RetryConfig {
+                max_attempts: 2,
+                base_delay_ms: 1,
+            },
+        )
+        .await
+        .expect("second attempt succeeds");
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let _ = response;
     }
 
     #[test]
