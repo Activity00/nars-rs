@@ -80,7 +80,13 @@ impl KnowledgeStore {
         self.load()
             .into_iter()
             .rev()
-            .find(|entry| entry.question == question)
+            .find(|entry| {
+                entry.question == question
+                    || (entry.question.len() >= 6
+                        && question.len() >= 6
+                        && (entry.question.contains(&question)
+                            || question.contains(&entry.question)))
+            })
             .map(|entry| entry.answer)
     }
 }

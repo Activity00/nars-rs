@@ -1119,3 +1119,78 @@ async fn a_question_asks_the_model_then_answers_with_the_result() {
         "the final answer must come after ask_model consumed the first response"
     );
 }
+
+fn question_proposal(text: &str) -> AgentIr {
+    AgentIr::TaskProposal(TaskProposal {
+        goal: GoalSpec::new(GoalType::AnswerQuestion, text),
+        constraints: Vec::new(),
+        candidate_actions: Vec::new(),
+        confidence: 0.9,
+        notes: None,
+        summary: None,
+    })
+}
+
+async fn send_message(app: &Router, session_id: &str, text: &str) -> String {
+    let (status, created) = request(
+        app,
+        Method::POST,
+        &format!("/api/sessions/{session_id}/messages"),
+        Some(json!({ "text": text })),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{created}");
+    created["run_id"].as_str().unwrap().to_owned()
+}
+
+async fn wait_for_run(app: &Router, run_id: &str) -> Value {
+    let mut state = Value::Null;
+    for _ in 0..200 {
+        let (_, body) = request(app, Method::GET, &format!("/api/runs/{run_id}"), None, None).await;
+        state = body["run"].clone();
+        if state["status"] == "completed" || state["status"] == "failed" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    state
+}
+
+#[tokio::test]
+async fn a_repeated_question_uses_stored_knowledge_without_ask_model() {
+    let harness = harness(
+        vec![
+            // Run 1: ask the model, then render its answer.
+            question_proposal("NARS 是什么？"),
+            final_answer("NARS is a non-axiomatic reasoning system."),
+            final_answer("NARS 是一个非公理推理系统。"),
+            // Run 2: if ask_model ran again it would consume "cached-direct"
+            // as the answer and the final would be "after-ask".
+            question_proposal("NARS 是什么？"),
+            final_answer("cached-direct"),
+            final_answer("after-ask"),
+            final_answer("after-ask"),
+            final_answer("after-ask"),
+        ],
+        ApprovalMode::AutoApprove,
+        None,
+    );
+    let session_id = create_session(&harness).await;
+
+    let first = send_message(&harness.app, &session_id, "NARS 是什么？").await;
+    let first_state = wait_for_run(&harness.app, &first).await;
+    assert_eq!(first_state["status"], "completed", "{first_state}");
+    assert_eq!(
+        first_state["messages"][0]["text"],
+        "NARS 是一个非公理推理系统。"
+    );
+
+    let second = send_message(&harness.app, &session_id, "NARS 是什么？").await;
+    let second_state = wait_for_run(&harness.app, &second).await;
+    assert_eq!(second_state["status"], "completed", "{second_state}");
+    assert_eq!(
+        second_state["messages"][0]["text"], "cached-direct",
+        "the second run must answer from knowledge without calling ask_model"
+    );
+}

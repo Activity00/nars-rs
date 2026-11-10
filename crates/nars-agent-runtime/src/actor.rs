@@ -718,7 +718,7 @@ impl SessionActor {
             .config
             .prior_knowledge
             .iter()
-            .any(|(asked, _)| asked.trim().eq_ignore_ascii_case(question.trim()));
+            .any(|(asked, _)| knowledge_matches(asked, &question));
         let ask_first =
             is_question && !asked_model && !known && self.manifests.contains_key("ask_model");
         if nars_stage == "answer" && self.plan.is_active() && !ask_first {
@@ -1147,6 +1147,32 @@ impl SessionActor {
     fn validation_context(&self) -> ValidationContext {
         ValidationContext::new(self.manifests.keys().cloned())
     }
+}
+
+/// Whether a stored question already covers the new one.
+fn knowledge_matches(stored: &str, question: &str) -> bool {
+    let stored = normalize_question(stored);
+    let question = normalize_question(question);
+    if stored.is_empty() || question.is_empty() {
+        return false;
+    }
+    if stored == question {
+        return true;
+    }
+    // Short strings match too easily ("what" inside "what is this"), so
+    // containment only applies once both sides carry some content.
+    stored.chars().count() >= 6
+        && question.chars().count() >= 6
+        && (stored.contains(&question) || question.contains(&stored))
+}
+
+fn normalize_question(question: &str) -> String {
+    question
+        .trim()
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn first_string_property(schema: &serde_json::Value) -> Option<String> {
