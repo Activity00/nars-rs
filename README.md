@@ -29,9 +29,10 @@ that is loaded at run start and written back when a run finishes. Agent-level
 facts (tool outcomes, plan progress, user preferences) are promoted into a
 cross-workspace profile and seeded into every run; the web UI can inspect both
 through the Memory panel. Tool outcomes are learned back into NARS memory and
-can override the model's preferred candidate or introduce a tool the model did
-not propose; the eval reports the override rate, the NARS-pickup count, and a
-model-top baseline.
+can override the model's preferred candidate, introduce a tool the model did
+not propose, and decide when the task is actually finished (stage completion is
+derived from evidence facts by forward chaining). The eval reports the override
+rate, the NARS-pickup count, and a model-top baseline.
 
 ```text
 user message → model (Agent IR) → Rust validation → NARS goals/facts
@@ -54,7 +55,8 @@ user message → model (Agent IR) → Rust validation → NARS goals/facts
   [0012](docs/decisions/0012-long-term-memory.md),
   [0013](docs/decisions/0013-memory-maintenance.md),
   [0014](docs/decisions/0014-profile-memory.md),
-  [0015](docs/decisions/0015-decision-learning.md)
+  [0015](docs/decisions/0015-decision-learning.md),
+  [0016](docs/decisions/0016-forward-chaining.md)
 - Architecture overview: [docs/architecture/overview.md](docs/architecture/overview.md)
 - Event protocol: [docs/protocol/events.md](docs/protocol/events.md)
 - 中文快速开始: [docs/agent/QUICKSTART_ZH.md](docs/agent/QUICKSTART_ZH.md)

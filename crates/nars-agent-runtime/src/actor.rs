@@ -826,7 +826,10 @@ impl SessionActor {
     }
 
     fn handle_final_answer(&mut self, answer: FinalAnswer, mut output: ActorOutput) -> ActorOutput {
-        if !self.plan.can_finish() && self.finish_deferrals_left > 0 {
+        let stages_done = self
+            .planner
+            .stages_satisfied(self.state.task.goal.goal_type);
+        if !stages_done && self.finish_deferrals_left > 0 {
             self.finish_deferrals_left -= 1;
             let guidance = self.plan.stage_guidance(&self.state.task);
             let plan_view = self.plan.view(self.state.step);

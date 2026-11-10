@@ -22,9 +22,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use nars_agent_ir::{
-    AgentError, CandidateAction, DecisionSource, NarsDecision, NarsFact, NarsGoal, Observation,
-    Outcome, ScoredCandidate, SelectedAction, TaskSpec, ToolResult, TruthValue, atomize,
-    keyed_atom, short_hash,
+    AgentError, CandidateAction, DecisionSource, GoalType, NarsDecision, NarsFact, NarsGoal,
+    Observation, Outcome, ScoredCandidate, SelectedAction, TaskSpec, ToolResult, TruthValue,
+    atomize, keyed_atom, short_hash,
 };
 use nars_core::{MemorySnapshot, OperationFeedback, Reasoner, Term, Truth};
 use nars_session::Experience;
@@ -255,7 +255,7 @@ impl NarsPlanner {
             tools.insert(tool);
         }
 
-        Ok(Self {
+        let mut planner = Self {
             reasoner,
             capture,
             argument_index,
@@ -271,7 +271,9 @@ impl NarsPlanner {
             selection: SelectionMode::Nars,
             last_context_key: None,
             last_goal: None,
-        })
+        };
+        planner.seed_stage_rules();
+        Ok(planner)
     }
 
     /// Creates a planner seeded with workspace experience.
@@ -371,6 +373,52 @@ impl NarsPlanner {
         }
         self.task_goal_type = snapshot.task_goal_type;
         Ok(())
+    }
+
+    /// Seeds the rule base that turns tool evidence into stage facts.
+    ///
+    /// These are ordinary NARS implications: once a matching fact is committed,
+    /// forward chaining derives `stage_<name>_satisfied`, and the runtime reads
+    /// that belief instead of counting observations in Rust.
+    fn seed_stage_rules(&mut self) {
+        let rules = [
+            ("tool_read_file_observed_success", "investigate"),
+            ("tool_read_file_outcome_success", "investigate"),
+            ("tool_list_files_observed_success", "investigate"),
+            ("tool_list_files_outcome_success", "investigate"),
+            ("tool_search_observed_success", "investigate"),
+            ("tool_search_outcome_success", "investigate"),
+            ("tool_apply_patch_observed_success", "change"),
+            ("tool_apply_patch_outcome_success", "change"),
+            ("tool_cargo_test_observed_success", "verify"),
+            ("tool_cargo_test_outcome_success", "verify"),
+            ("tool_cargo_check_observed_success", "verify"),
+            ("tool_cargo_check_outcome_success", "verify"),
+            ("tool_run_command_observed_success", "verify"),
+            ("tool_run_command_outcome_success", "verify"),
+        ];
+        for (fact, stage) in rules {
+            let _ = self
+                .reasoner
+                .add_sentence(&format!("<{fact} ==> stage_{stage}_satisfied>."));
+        }
+    }
+
+    /// Whether NARS believes every stage required for this goal type is done.
+    pub fn stages_satisfied(&mut self, goal_type: GoalType) -> bool {
+        let required: &[&str] = match goal_type {
+            GoalType::ModifyCode | GoalType::Refactor | GoalType::CreateFiles => {
+                &["change", "verify"]
+            }
+            GoalType::Investigate | GoalType::AnswerQuestion => &["investigate"],
+            GoalType::RunTests => &["verify"],
+            GoalType::Other => &[],
+        };
+        required.iter().all(|stage| {
+            self.reasoner
+                .belief_expectation(&format!("stage_{stage}_satisfied"))
+                .is_some_and(|expectation| expectation > 0.5)
+        })
     }
 
     /// Switches between NARS inference and the evaluation baseline.

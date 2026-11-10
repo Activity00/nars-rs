@@ -73,6 +73,7 @@ pub struct Reasoner {
     similarity_distance: f64,
     random_state: u64,
     current_time: i64,
+    forward_rules: Vec<(Term, Term, Truth)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -127,6 +128,7 @@ impl Reasoner {
             similarity_distance: 1.0,
             random_state: 1,
             current_time: 1,
+            forward_rules: Vec::new(),
         })
     }
 
@@ -280,6 +282,13 @@ impl Reasoner {
         let mut ranked = best.into_iter().collect::<Vec<_>>();
         ranked.sort_by(|left, right| right.1.total_cmp(&left.1));
         ranked
+    }
+
+    /// Expectation of a stored belief, by rendered term text.
+    pub fn belief_expectation(&mut self, term: &str) -> Option<f64> {
+        let term = self.language.parse_term(term).ok()?;
+        let concept = self.memory.find(&term)?;
+        (concept.belief.truth.confidence > 0.0).then(|| concept.belief.truth.expectation())
     }
 
     /// The atom table shared by every term in this runtime.
@@ -470,6 +479,14 @@ impl Reasoner {
             processed: !eternal,
             ..event
         };
+        if self.language.copula_equals(stored_event.term.root(), '?') {
+            let subject = stored_event.term.extract_subterm(1);
+            let consequent = stored_event.term.extract_subterm(2);
+            if !subject.is_empty() && !consequent.is_empty() {
+                self.forward_rules
+                    .push((subject, consequent, stored_event.truth));
+            }
+        }
         let operation_slot = self.operation_slot_for_implication(&stored_event.term);
         if !self.memory.add_input_event_at_operation(
             &self.language,
@@ -1314,6 +1331,7 @@ impl Reasoner {
     pub fn cycle(&mut self) {
         self.process_declarative_implications();
         if let Some((selected, selected_priority)) = self.memory.pop_belief() {
+            self.forward_chain_implications(&selected);
             let mut pending = Vec::new();
             self.collect_temporal_derivations(selected, selected_priority, &mut pending);
             for derivation in self.rules.apply(
@@ -2559,6 +2577,49 @@ impl Reasoner {
         true
     }
 
+    /// Derives consequents of learned implications from a new belief.
+    ///
+    /// Input implications are stored for backward (goal) reasoning; this adds
+    /// the forward direction so a fact like `tool_x_observed_success` can
+    /// produce `stage_y_satisfied` without waiting for a goal.
+    fn forward_chain_implications(&mut self, belief: &Event) {
+        if belief.event_type != EventType::Belief
+            || self.language.copula_equals(belief.term.root(), '?')
+            || self.language.copula_equals(belief.term.root(), '$')
+        {
+            return;
+        }
+        let derived = self
+            .forward_rules
+            .iter()
+            .filter(|(subject, _, _)| *subject == belief.term)
+            .map(|(_, consequent, truth)| (*consequent, belief.truth.deduction(*truth)))
+            .collect::<Vec<_>>();
+        for (term, truth) in derived {
+            let event =
+                self.events
+                    .input_event(term, EventType::Belief, truth, 0.0, self.current_time);
+            let slot = self.operation_slot_for_implication(&event.term);
+            self.memory.add_event(
+                &self.language,
+                Event {
+                    occurrence_time: OCCURRENCE_ETERNAL,
+                    processed: false,
+                    input: false,
+                    ..event
+                },
+                self.current_time,
+                AddEventOptions {
+                    priority: 0.9,
+                    derived: true,
+                    eternalize: true,
+                    operation_slot: slot,
+                    ..AddEventOptions::default()
+                },
+            );
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     fn collect_goal_candidates(
         &self,
@@ -3665,6 +3726,39 @@ impl Default for Reasoner {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn stage_rule_derives_satisfaction() {
+        let mut reasoner = Reasoner::new().expect("reasoner");
+        reasoner
+            .add_sentence("<tool_apply_patch_outcome_success ==> stage_change_satisfied>.")
+            .expect("rule");
+        reasoner
+            .add_sentence("tool_apply_patch_outcome_success.")
+            .expect("fact");
+        reasoner.cycles(5);
+        let expectation = reasoner.belief_expectation("stage_change_satisfied");
+        eprintln!("stage={expectation:?}");
+        assert!(
+            expectation.is_some_and(|value| value > 0.5),
+            "{expectation:?}"
+        );
+    }
+
+    #[test]
+    fn implication_forward_chains_a_belief() {
+        let mut reasoner = Reasoner::new().expect("reasoner");
+        reasoner.add_sentence("<a ==> b>.").expect("rule");
+        reasoner.add_sentence("a.").expect("belief");
+        reasoner.cycles(10);
+        eprintln!("b={:?}", reasoner.belief_expectation("b"));
+        assert!(
+            reasoner.belief_expectation("b").is_some(),
+            "forward chaining should derive b"
+        );
+    }
+
     use super::*;
 
     #[test]
