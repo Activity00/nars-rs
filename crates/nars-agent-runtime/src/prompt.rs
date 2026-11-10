@@ -145,6 +145,12 @@ fn render_state(state: &RunState, phase: &str, plan: Option<&TaskPlanView>) -> S
         .map(|call| json!({"tool": call.tool, "arguments": call.arguments}));
 
     let instruction = match phase {
+        "finalize" if state.observations.is_empty() => {
+            "The task is ending and no tool work was needed. Answer the user's message \
+             directly and concisely in final_answer. Never describe phases, plans, or say that \
+             the task could not be completed; if information is genuinely missing, state what \
+             is missing and what you can answer."
+        }
         "finalize" => {
             "The task is ending. Return a final_answer summarizing what was done, what \
                        was verified, and anything the user must know. Do not propose new actions."

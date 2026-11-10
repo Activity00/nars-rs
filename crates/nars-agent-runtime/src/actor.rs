@@ -700,7 +700,14 @@ impl SessionActor {
             .unwrap_or(self.state.task.goal.goal_type);
         let nars_stage = self.planner.active_stage_name(goal_type);
         self.plan.set_active_by_id(nars_stage);
-        if nars_stage == "answer" && self.plan.is_active() {
+        let is_question = matches!(goal_type, nars_agent_ir::GoalType::AnswerQuestion);
+        let asked_model = self
+            .state
+            .observations
+            .iter()
+            .any(|observation| observation.tool == "ask_model");
+        let ask_first = is_question && !asked_model && self.manifests.contains_key("ask_model");
+        if nars_stage == "answer" && self.plan.is_active() && !ask_first {
             // NARS believes the work is done; ask the model to render the
             // answer instead of executing another action.
             let plan_view = self.plan.view(self.state.step);
@@ -735,6 +742,21 @@ impl SessionActor {
 
         let (mut candidates, deferred, model_candidate_count) = if let Some(action) = derived {
             (vec![action], Vec::new(), 0)
+        } else if ask_first {
+            let question = if self.state.task.user_message.trim().is_empty() {
+                self.state.task.goal.description.clone()
+            } else {
+                self.state.task.user_message.clone()
+            };
+            (
+                vec![
+                    CandidateAction::new("ask_model")
+                        .with_arguments(serde_json::json!({ "question": question }))
+                        .with_confidence(0.8),
+                ],
+                Vec::new(),
+                0,
+            )
         } else {
             let (mut candidates, deferred) = self.plan.filter(&proposal.candidate_actions);
             let count = candidates.len();
@@ -744,7 +766,11 @@ impl SessionActor {
         dedupe_candidates(&mut candidates);
         // Cold start: when neither the model nor the plan produced an action,
         // let NARS ask the model for knowledge instead of stalling.
-        if candidates.is_empty() && self.manifests.contains_key("ask_model") {
+        let needs_work = !matches!(
+            goal_type,
+            nars_agent_ir::GoalType::AnswerQuestion | nars_agent_ir::GoalType::Other
+        );
+        if needs_work && candidates.is_empty() && self.manifests.contains_key("ask_model") {
             candidates.push(
                 CandidateAction::new("ask_model")
                     .with_arguments(serde_json::json!({

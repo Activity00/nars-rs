@@ -375,6 +375,15 @@ impl NarsPlanner {
         Ok(())
     }
 
+    /// Per-run stage fact name. Stage completion is run state, so it must not
+    /// leak into later runs that share the same workspace memory.
+    fn stage_term(&self, stage: &str) -> String {
+        // Atom names are truncated at 32 characters by the Narsese layer, so
+        // the key is shortened and the stage word stays early in the name.
+        let key = &self.run_key[..self.run_key.len().min(8)];
+        format!("stage_{key}_{stage}_sat")
+    }
+
     /// Seeds the rule base that turns tool evidence into stage facts.
     ///
     /// These are ordinary NARS implications: once a matching fact is committed,
@@ -396,9 +405,10 @@ impl NarsPlanner {
             ("tool_run_command_outcome_success", "verify"),
         ];
         for (fact, stage) in rules {
+            let consequent = self.stage_term(stage);
             let _ = self
                 .reasoner
-                .add_sentence(&format!("<{fact} ==> stage_{stage}_satisfied>."));
+                .add_sentence(&format!("<{fact} ==> {consequent}>."));
         }
     }
 
@@ -439,7 +449,8 @@ impl NarsPlanner {
             GoalType::ModifyCode | GoalType::Refactor | GoalType::CreateFiles => {
                 &["investigate", "change", "verify", "answer"]
             }
-            GoalType::Investigate | GoalType::AnswerQuestion => &["investigate", "answer"],
+            GoalType::Investigate => &["investigate", "answer"],
+            GoalType::AnswerQuestion => &["answer"],
             GoalType::RunTests => &["verify", "answer"],
             GoalType::Other => &[],
         };
@@ -447,9 +458,10 @@ impl NarsPlanner {
             if *stage == "answer" {
                 return "answer";
             }
+            let term = self.stage_term(stage);
             let done = self
                 .reasoner
-                .belief_expectation(&format!("stage_{stage}_satisfied"))
+                .belief_expectation(&term)
                 .is_some_and(|expectation| expectation > 0.5);
             if !done {
                 return stage;
@@ -460,8 +472,10 @@ impl NarsPlanner {
 
     /// Retracts the change and verify stages after a failed verification.
     pub fn retract_after_failed_verification(&mut self) {
-        self.reasoner.retract_belief("stage_verify_satisfied");
-        self.reasoner.retract_belief("stage_change_satisfied");
+        let verify = self.stage_term("verify");
+        let change = self.stage_term("change");
+        self.reasoner.retract_belief(&verify);
+        self.reasoner.retract_belief(&change);
     }
 
     /// Whether NARS believes every stage required for this goal type is done.
@@ -470,13 +484,17 @@ impl NarsPlanner {
             GoalType::ModifyCode | GoalType::Refactor | GoalType::CreateFiles => {
                 &["change", "verify"]
             }
-            GoalType::Investigate | GoalType::AnswerQuestion => &["investigate"],
+            GoalType::Investigate => &["investigate"],
+            // A pure question is answered directly; requiring a file read
+            // would force unnecessary tool calls before every reply.
+            GoalType::AnswerQuestion => &[],
             GoalType::RunTests => &["verify"],
             GoalType::Other => &[],
         };
         required.iter().all(|stage| {
+            let term = self.stage_term(stage);
             self.reasoner
-                .belief_expectation(&format!("stage_{stage}_satisfied"))
+                .belief_expectation(&term)
                 .is_some_and(|expectation| expectation > 0.5)
         })
     }
@@ -1315,7 +1333,7 @@ mod tests {
         assert!(!before.concepts.is_empty(), "{before:?}");
 
         let restored = NarsPlanner::new_with_snapshot(
-            "run_2",
+            "run_demo",
             [
                 "read_file".to_owned(),
                 "search".to_owned(),
@@ -1341,7 +1359,7 @@ mod tests {
         snapshot.language.atoms[0] = "renamed".to_owned();
 
         let restored = NarsPlanner::new_with_snapshot(
-            "run_2",
+            "run_demo",
             [
                 "read_file".to_owned(),
                 "search".to_owned(),

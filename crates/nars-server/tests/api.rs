@@ -1061,3 +1061,61 @@ async fn injects_earlier_completed_turns_into_the_next_run() {
     assert_eq!(history[1].role, nars_agent_ir::ChatRole::Assistant);
     assert_eq!(history[1].text, "first answer");
 }
+
+#[tokio::test]
+async fn a_question_asks_the_model_then_answers_with_the_result() {
+    let harness = harness(
+        vec![
+            AgentIr::TaskProposal(TaskProposal {
+                goal: GoalSpec::new(GoalType::AnswerQuestion, "what is NARS?"),
+                constraints: Vec::new(),
+                candidate_actions: Vec::new(),
+                confidence: 0.9,
+                notes: None,
+                summary: None,
+            }),
+            // Consumed by ask_model, not by the final answer.
+            final_answer("NARS is a non-axiomatic reasoning system."),
+            final_answer("NARS 是一个非公理推理系统。"),
+            final_answer("NARS 是一个非公理推理系统。"),
+            final_answer("NARS 是一个非公理推理系统。"),
+        ],
+        ApprovalMode::AutoApprove,
+        None,
+    );
+    let session_id = create_session(&harness).await;
+
+    let (status, created) = request(
+        &harness.app,
+        Method::POST,
+        &format!("/api/sessions/{session_id}/messages"),
+        Some(json!({"text": "NARS 是什么？"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{created}");
+    let run_id = created["run_id"].as_str().unwrap().to_owned();
+
+    let mut state = Value::Null;
+    for _ in 0..200 {
+        let (_, body) = request(
+            &harness.app,
+            Method::GET,
+            &format!("/api/runs/{run_id}"),
+            None,
+            None,
+        )
+        .await;
+        state = body["run"].clone();
+        if state["status"] == "completed" || state["status"] == "failed" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    assert_eq!(state["status"], "completed", "{state}");
+    assert_eq!(
+        state["messages"][0]["text"], "NARS 是一个非公理推理系统。",
+        "the final answer must come after ask_model consumed the first response"
+    );
+}

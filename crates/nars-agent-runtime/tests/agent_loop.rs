@@ -753,3 +753,43 @@ async fn nars_derives_action_from_a_translated_goal() {
         "the action should be NARS-derived, not model-proposed"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_question_is_answered_without_tool_work() {
+    let dir = TempDir::new().unwrap();
+    write_crate(&dir);
+    let mut proposal_ir = proposal("list_files", json!({"path": "."}), 0.9);
+    if let AgentIr::TaskProposal(ref mut proposal) = proposal_ir {
+        proposal.goal = GoalSpec::new(GoalType::AnswerQuestion, "what is this project?");
+        proposal.candidate_actions.clear();
+    }
+    let (runtime, scripted, _sink) = runtime(
+        &dir,
+        vec![proposal_ir, final_answer(), final_answer(), final_answer()],
+        ApprovalMode::AutoApprove,
+    );
+    let task = TaskSpec::new(
+        GoalSpec::new(GoalType::AnswerQuestion, "what is this project?"),
+        dir.path().display().to_string(),
+        "what is this project?",
+    );
+    let handle = runtime.start(SessionId::new(), task).unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(30), handle.wait()).await;
+
+    let state = handle.state();
+    assert_eq!(state.status, RunStatus::Completed, "{:?}", state.error);
+    assert!(
+        state.tool_calls.is_empty(),
+        "a question should not require tools: {:?}",
+        state
+            .tool_calls
+            .iter()
+            .map(|call| call.tool.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        scripted.requests().len() <= 3,
+        "{}",
+        scripted.requests().len()
+    );
+}
