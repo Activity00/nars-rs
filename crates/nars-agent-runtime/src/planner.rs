@@ -406,9 +406,7 @@ impl NarsPlanner {
         ];
         for (fact, stage) in rules {
             let consequent = self.stage_term(stage);
-            let _ = self
-                .reasoner
-                .add_sentence(&format!("<{fact} ==> {consequent}>."));
+            let _ = self.reasoner.add_forward_rule(fact, &consequent);
         }
     }
 
@@ -513,9 +511,14 @@ impl NarsPlanner {
     pub fn seed_profile_facts(&mut self, facts: &[NarsFact]) -> usize {
         let mut seeded = 0;
         for fact in facts {
-            if self.commit_fact(fact).is_ok() {
+            let truth = Truth::new(fact.truth.frequency, fact.truth.confidence);
+            if self.reasoner.add_quiet_belief(&fact.term, truth).is_ok() {
+                self.fact_log.push_back(fact.clone());
                 seeded += 1;
             }
+        }
+        while self.fact_log.len() > MAX_FACT_LOG {
+            self.fact_log.pop_front();
         }
         seeded
     }

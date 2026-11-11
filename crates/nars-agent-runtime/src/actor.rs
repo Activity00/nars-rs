@@ -168,6 +168,7 @@ pub struct SessionActor {
     plan: TaskPlan,
     stage_guidance_left: u32,
     finish_deferrals_left: u32,
+    evidence_queue: Vec<CandidateAction>,
 }
 
 impl SessionActor {
@@ -248,6 +249,7 @@ impl SessionActor {
             plan,
             stage_guidance_left: 2,
             finish_deferrals_left: 2,
+            evidence_queue: Vec::new(),
         };
         let mut output = ActorOutput::default().with_event(AgentEvent::RunStarted {
             run_id: actor.state.run_id.clone(),
@@ -322,6 +324,7 @@ impl SessionActor {
             plan,
             stage_guidance_left: 2,
             finish_deferrals_left: 2,
+            evidence_queue: Vec::new(),
         };
         let mut output = ActorOutput::default().with_event(AgentEvent::RunResumed {
             run_id: actor.state.run_id.clone(),
@@ -958,24 +961,30 @@ impl SessionActor {
             .unwrap_or(self.state.task.goal.goal_type);
         let stages_done = self.planner.stages_satisfied(goal_type);
         // A question about the workspace must not be answered from memory
-        // alone: reject the first evidence-free answer and ask for an action.
-        if self.state.observations.is_empty()
-            && needs_workspace_evidence(&self.state.task)
-            && self.finish_deferrals_left > 0
-        {
-            self.finish_deferrals_left -= 1;
-            let plan_view = self.plan.view(self.state.step);
-            let message = "A final_answer is premature: the user asked about this workspace and \
-                           no file has been read yet. Call read_file or list_files to gather \
-                           evidence, then answer with what you found.";
-            let command = self.begin_model_call(
-                ModelPurpose::Plan,
-                self.state.step,
-                prompt::stage_message(&self.state, message, Some(&plan_view)),
-                &mut output,
-            );
-            output.commands.push(command);
-            return output;
+        // alone. Seed the files the user named, reject the first blind answer,
+        // then let NARS read them itself if the model won't.
+        if needs_workspace_evidence(&self.state.task) {
+            if self.evidence_queue.is_empty() && self.state.observations.is_empty() {
+                self.evidence_queue = evidence_targets(&self.state.task);
+            }
+            if self.state.observations.is_empty() && self.finish_deferrals_left > 0 {
+                self.finish_deferrals_left -= 1;
+                let plan_view = self.plan.view(self.state.step);
+                let message = "A final_answer is premature: the user asked about this workspace and \
+                               no file has been read yet. Call read_file or list_files to gather \
+                               evidence, then answer with what you found.";
+                let command = self.begin_model_call(
+                    ModelPurpose::Plan,
+                    self.state.step,
+                    prompt::stage_message(&self.state, message, Some(&plan_view)),
+                    &mut output,
+                );
+                output.commands.push(command);
+                return output;
+            }
+            if self.force_evidence_action(&mut output) {
+                return output;
+            }
         }
         // The model refused to gather evidence twice: NARS investigates on its
         // own instead of accepting a blind answer.
@@ -1053,14 +1062,15 @@ impl SessionActor {
         output
     }
 
-    /// Runs a read-only `list_files` when the model will not gather evidence.
+    /// Runs the next read-only evidence action when the model will not.
     fn force_evidence_action(&mut self, output: &mut ActorOutput) -> bool {
-        let Some(manifest) = self.manifests.get("list_files").cloned() else {
+        let Some(candidate) = self.evidence_queue.first().cloned() else {
             return false;
         };
-        let candidate = CandidateAction::new("list_files")
-            .with_arguments(serde_json::json!({"path": ".", "depth": 2}))
-            .with_confidence(0.6);
+        let _ = self.evidence_queue.remove(0);
+        let Some(manifest) = self.manifests.get(&candidate.tool).cloned() else {
+            return false;
+        };
         let call = build_call(
             ToolCallId::new(),
             self.state.run_id.clone(),
@@ -1229,6 +1239,118 @@ impl SessionActor {
 }
 
 /// Whether a stored question already covers the new one.
+/// Candidate read-only actions for the files or directories the user named.
+fn evidence_targets(task: &TaskSpec) -> Vec<CandidateAction> {
+    let workspace = std::path::Path::new(&task.workspace);
+    let mut targets: Vec<(String, serde_json::Value)> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for raw in task
+        .user_message
+        .split(|c: char| c.is_whitespace() || "、，,;；:：".contains(c))
+    {
+        let token = raw
+            .trim_matches(|c: char| "，。、；：「」（）()【】\"'`".contains(c))
+            .trim_start_matches("./");
+        if token.is_empty() || !seen.insert(token.to_owned()) {
+            continue;
+        }
+        let path = workspace.join(token);
+        if path.is_file() {
+            push_unique(
+                &mut targets,
+                "read_file",
+                serde_json::json!({"path": token}),
+            );
+        } else if path.is_dir() {
+            push_unique(
+                &mut targets,
+                "list_files",
+                serde_json::json!({"path": token}),
+            );
+            collect_text_files(workspace, &path, token, 0, &mut targets);
+        } else if !token.contains('.') && !token.contains('/') {
+            let with_md = workspace.join(format!("{token}.md"));
+            if with_md.is_file() {
+                push_unique(
+                    &mut targets,
+                    "read_file",
+                    serde_json::json!({"path": format!("{token}.md")}),
+                );
+            }
+        }
+    }
+    if targets.is_empty() {
+        for name in ["README.md", "Cargo.toml"] {
+            if workspace.join(name).is_file() {
+                push_unique(&mut targets, "read_file", serde_json::json!({"path": name}));
+            }
+        }
+        let src = workspace.join("src");
+        if src.is_dir() {
+            collect_text_files(workspace, &src, "src", 0, &mut targets);
+        }
+        if targets.is_empty() {
+            push_unique(
+                &mut targets,
+                "list_files",
+                serde_json::json!({"path": ".", "depth": 2}),
+            );
+        }
+    }
+    targets
+        .into_iter()
+        .take(8)
+        .map(|(tool, args)| {
+            CandidateAction::new(tool)
+                .with_arguments(args)
+                .with_confidence(0.6)
+        })
+        .collect()
+}
+
+fn push_unique(
+    targets: &mut Vec<(String, serde_json::Value)>,
+    tool: &str,
+    args: serde_json::Value,
+) {
+    if !targets.iter().any(|(t, a)| t == tool && a == &args) {
+        targets.push((tool.to_owned(), args));
+    }
+}
+
+fn collect_text_files(
+    workspace: &std::path::Path,
+    dir: &std::path::Path,
+    relative: &str,
+    depth: usize,
+    targets: &mut Vec<(String, serde_json::Value)>,
+) {
+    if depth > 1 || targets.len() >= 8 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten().take(40) {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || name == "target" || name == "node_modules" {
+            continue;
+        }
+        let child = format!("{relative}/{name}");
+        if path.is_dir() {
+            collect_text_files(workspace, &path, &child, depth + 1, targets);
+        } else if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| matches!(ext, "md" | "toml" | "rs" | "txt"))
+        {
+            let _ = workspace.join(&child);
+            push_unique(targets, "read_file", serde_json::json!({"path": child}));
+        }
+    }
+}
+
 /// Whether the request can only be answered by inspecting the workspace.
 fn needs_workspace_evidence(task: &TaskSpec) -> bool {
     let text = format!(
@@ -1341,4 +1463,29 @@ fn observation_facts(call: &ToolCall, result: &ToolResult) -> Vec<nars_agent_ir:
         });
     }
     facts
+}
+
+#[cfg(test)]
+mod evidence_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_named_files_and_skips_missing_paths() {
+        let root = format!("{}/../..", env!("CARGO_MANIFEST_DIR"));
+        let task = TaskSpec::new(
+            nars_agent_ir::GoalSpec::new(nars_agent_ir::GoalType::AnswerQuestion, "read"),
+            root,
+            "阅读一下该仓库 README、Cargo.toml、src/ 的实际文本",
+        );
+        let targets = evidence_targets(&task);
+        let paths = targets
+            .iter()
+            .filter(|candidate| candidate.tool == "read_file")
+            .filter_map(|candidate| candidate.arguments.get("path")?.as_str().map(str::to_owned))
+            .collect::<Vec<_>>();
+        assert!(paths.contains(&"README.md".to_owned()), "{paths:?}");
+        assert!(paths.contains(&"Cargo.toml".to_owned()), "{paths:?}");
+        // This workspace has no top-level src/, so it must not be invented.
+        assert!(targets.len() <= 8);
+    }
 }

@@ -476,6 +476,35 @@ impl Reasoner {
         self.add_belief_term(term, truth, eternal, 0.0)
     }
 
+    /// Stores a belief without running inference cycles.
+    ///
+    /// Used when restoring workspace knowledge: cycling once per fact is very
+    /// slow on a large memory and the facts are not needed for decision yet.
+    pub fn add_quiet_belief(&mut self, source: &str, truth: Truth) -> Result<Event, ReasonerError> {
+        let term = self
+            .language
+            .parse_term(source)
+            .map_err(|error| ReasonerError::new(error.to_string()))?;
+        let mut event =
+            self.events
+                .input_event(term, EventType::Belief, truth, 0.0, self.current_time);
+        event.occurrence_time = OCCURRENCE_ETERNAL;
+        let stored_event = Event {
+            processed: true,
+            ..event
+        };
+        let operation_slot = self.operation_slot_for_implication(&stored_event.term);
+        if !self.memory.add_input_event_at_operation(
+            &self.language,
+            stored_event,
+            self.current_time,
+            operation_slot,
+        ) {
+            return Err(ReasonerError::new("memory rejected belief input"));
+        }
+        Ok(event)
+    }
+
     fn add_belief_term(
         &mut self,
         term: Term,
@@ -2595,6 +2624,25 @@ impl Reasoner {
             self.arm_anticipations(event);
         }
         self.cycle();
+        true
+    }
+
+    /// Registers a forward rule without running an inference cycle.
+    ///
+    /// Used for static stage rules: going through `add_sentence` re-enters the
+    /// cycling queue, which is very slow on a restored workspace memory.
+    pub fn add_forward_rule(&mut self, subject: &str, consequent: &str) -> bool {
+        let Ok(subject) = self.language_mut().parse_term(subject) else {
+            return false;
+        };
+        let Ok(consequent) = self.language_mut().parse_term(consequent) else {
+            return false;
+        };
+        if subject.is_empty() || consequent.is_empty() {
+            return false;
+        }
+        self.forward_rules
+            .push((subject, consequent, Truth::new(1.0, 0.9)));
         true
     }
 
