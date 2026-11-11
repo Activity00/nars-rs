@@ -168,6 +168,7 @@ pub struct SessionActor {
     plan: TaskPlan,
     stage_guidance_left: u32,
     finish_deferrals_left: u32,
+    finalize_forces_left: u32,
 }
 
 impl SessionActor {
@@ -248,6 +249,7 @@ impl SessionActor {
             plan,
             stage_guidance_left: 2,
             finish_deferrals_left: 2,
+            finalize_forces_left: 2,
         };
         let mut output = ActorOutput::default().with_event(AgentEvent::RunStarted {
             run_id: actor.state.run_id.clone(),
@@ -322,6 +324,7 @@ impl SessionActor {
             plan,
             stage_guidance_left: 2,
             finish_deferrals_left: 2,
+            finalize_forces_left: 2,
         };
         let mut output = ActorOutput::default().with_event(AgentEvent::RunResumed {
             run_id: actor.state.run_id.clone(),
@@ -727,8 +730,39 @@ impl SessionActor {
         // Questions may still need workspace evidence; only force the answer
         // for action goals whose stages NARS considers complete.
         if !is_question && nars_stage == "answer" && self.plan.is_active() {
-            // NARS believes the work is done; ask the model to render the
-            // answer instead of executing another action.
+            // The model may keep proposing actions instead of answering. Cap
+            // the number of forced finalize calls so a stubborn model cannot
+            // loop forever without advancing the step counter.
+            if self.finalize_forces_left == 0 {
+                let text = proposal
+                    .summary
+                    .clone()
+                    .or_else(|| proposal.notes.clone())
+                    .unwrap_or_else(|| "任务已完成。".to_owned());
+                self.state.messages.push(ChatMessage {
+                    role: ChatRole::Assistant,
+                    text: text.clone(),
+                    run_id: Some(self.state.run_id.clone()),
+                    created_at_ms: (self.config.clock)(),
+                });
+                output.events.push(AgentEvent::AssistantMessage {
+                    run_id: self.state.run_id.clone(),
+                    text: text.clone(),
+                });
+                self.phase = Phase::Finished;
+                self.state.status = RunStatus::Completed;
+                self.state.touch((self.config.clock)());
+                output.events.push(AgentEvent::RunCompleted {
+                    run_id: self.state.run_id.clone(),
+                    summary: text,
+                    success: true,
+                });
+                output.commands.push(Command::Checkpoint);
+                output.commands.push(Command::Finish);
+                return Ok(output);
+            }
+            self.finalize_forces_left -= 1;
+            self.state.step += 1;
             let plan_view = self.plan.view(self.state.step);
             let command = self.begin_model_call(
                 ModelPurpose::Finalize,
