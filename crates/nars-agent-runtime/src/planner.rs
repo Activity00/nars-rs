@@ -450,7 +450,9 @@ impl NarsPlanner {
                 &["investigate", "change", "verify", "answer"]
             }
             GoalType::Investigate => &["investigate", "answer"],
-            GoalType::AnswerQuestion => &["answer"],
+            // Questions may need evidence first; the answer stage follows once
+            // investigation is satisfied.
+            GoalType::AnswerQuestion => &["investigate", "answer"],
             GoalType::RunTests => &["verify", "answer"],
             GoalType::Other => &[],
         };

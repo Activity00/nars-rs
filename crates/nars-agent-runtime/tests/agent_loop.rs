@@ -793,3 +793,36 @@ async fn a_question_is_answered_without_tool_work() {
         scripted.requests().len()
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_question_that_needs_evidence_reads_before_answering() {
+    let dir = TempDir::new().unwrap();
+    write_crate(&dir);
+    std::fs::write(dir.path().join("README.md"), "# fixture\n").unwrap();
+
+    let mut proposal_ir = proposal("read_file", json!({"path": "README.md"}), 0.9);
+    if let AgentIr::TaskProposal(ref mut proposal) = proposal_ir {
+        proposal.goal = GoalSpec::new(GoalType::AnswerQuestion, "summarize the README");
+    }
+    let (runtime, _scripted, _sink) = runtime(
+        &dir,
+        vec![proposal_ir, final_answer(), final_answer(), final_answer()],
+        ApprovalMode::AutoApprove,
+    );
+    let task = TaskSpec::new(
+        GoalSpec::new(GoalType::AnswerQuestion, "summarize the README"),
+        dir.path().display().to_string(),
+        "summarize the README",
+    );
+    let handle = runtime.start(SessionId::new(), task).unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(30), handle.wait()).await;
+
+    let state = handle.state();
+    assert_eq!(state.status, RunStatus::Completed, "{:?}", state.error);
+    let tools = state
+        .tool_calls
+        .iter()
+        .map(|call| call.tool.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(tools, ["read_file"]);
+}

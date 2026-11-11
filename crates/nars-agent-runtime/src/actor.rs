@@ -719,9 +719,14 @@ impl SessionActor {
             .prior_knowledge
             .iter()
             .any(|(asked, _)| knowledge_matches(asked, &question));
-        let ask_first =
-            is_question && !asked_model && !known && self.manifests.contains_key("ask_model");
-        if nars_stage == "answer" && self.plan.is_active() && !ask_first {
+        let ask_first = is_question
+            && !asked_model
+            && !known
+            && proposal.candidate_actions.is_empty()
+            && self.manifests.contains_key("ask_model");
+        // Questions may still need workspace evidence; only force the answer
+        // for action goals whose stages NARS considers complete.
+        if !is_question && nars_stage == "answer" && self.plan.is_active() {
             // NARS believes the work is done; ask the model to render the
             // answer instead of executing another action.
             let plan_view = self.plan.view(self.state.step);
@@ -774,16 +779,30 @@ impl SessionActor {
         } else {
             let (mut candidates, deferred) = self.plan.filter(&proposal.candidate_actions);
             let count = candidates.len();
-            candidates.extend(self.plan.fallback_candidates(&self.state.task));
+            // A question never invents tool work on its own; it either acts on
+            // the model's proposed evidence gathering or answers directly.
+            if !is_question {
+                candidates.extend(self.plan.fallback_candidates(&self.state.task));
+            }
             (candidates, deferred, count)
         };
         dedupe_candidates(&mut candidates);
+        // A question with no admissible action is answered now, from the
+        // observations/knowledge already gathered.
+        if is_question && candidates.is_empty() {
+            let plan_view = self.plan.view(self.state.step);
+            let command = self.begin_model_call(
+                ModelPurpose::Finalize,
+                self.state.step,
+                prompt::finalize_message(&self.state, Some(&plan_view)),
+                &mut output,
+            );
+            output.commands.push(command);
+            return Ok(output);
+        }
         // Cold start: when neither the model nor the plan produced an action,
         // let NARS ask the model for knowledge instead of stalling.
-        let needs_work = !matches!(
-            goal_type,
-            nars_agent_ir::GoalType::AnswerQuestion | nars_agent_ir::GoalType::Other
-        );
+        let needs_work = !is_question;
         if needs_work && candidates.is_empty() && self.manifests.contains_key("ask_model") {
             candidates.push(
                 CandidateAction::new("ask_model")
