@@ -159,7 +159,9 @@ fn render_state(state: &RunState, phase: &str, plan: Option<&TaskPlanView>) -> S
         other if !matches!(other, "plan" | "finalize") => other,
         _ => {
             "Decide what to do next. Return a task_proposal with candidate actions, a final_answer \
-              if the task is already complete, or a clarification if blocked."
+              if the task is already complete, or a clarification if blocked. If the request is \
+              about the current workspace, repository, files or project, you must inspect them \
+              with read_file/list_files before answering."
         }
     };
 

@@ -957,6 +957,35 @@ impl SessionActor {
             .goal_type()
             .unwrap_or(self.state.task.goal.goal_type);
         let stages_done = self.planner.stages_satisfied(goal_type);
+        // A question about the workspace must not be answered from memory
+        // alone: reject the first evidence-free answer and ask for an action.
+        if self.state.observations.is_empty()
+            && needs_workspace_evidence(&self.state.task)
+            && self.finish_deferrals_left > 0
+        {
+            self.finish_deferrals_left -= 1;
+            let plan_view = self.plan.view(self.state.step);
+            let message = "A final_answer is premature: the user asked about this workspace and \
+                           no file has been read yet. Call read_file or list_files to gather \
+                           evidence, then answer with what you found.";
+            let command = self.begin_model_call(
+                ModelPurpose::Plan,
+                self.state.step,
+                prompt::stage_message(&self.state, message, Some(&plan_view)),
+                &mut output,
+            );
+            output.commands.push(command);
+            return output;
+        }
+        // The model refused to gather evidence twice: NARS investigates on its
+        // own instead of accepting a blind answer.
+        if self.state.observations.is_empty()
+            && needs_workspace_evidence(&self.state.task)
+            && self.finish_deferrals_left == 0
+            && self.force_evidence_action(&mut output)
+        {
+            return output;
+        }
         if !stages_done && self.finish_deferrals_left > 0 {
             self.finish_deferrals_left -= 1;
             let guidance = self.plan.stage_guidance(&self.state.task);
@@ -1022,6 +1051,37 @@ impl SessionActor {
         output.commands.push(Command::Checkpoint);
         output.commands.push(Command::Finish);
         output
+    }
+
+    /// Runs a read-only `list_files` when the model will not gather evidence.
+    fn force_evidence_action(&mut self, output: &mut ActorOutput) -> bool {
+        let Some(manifest) = self.manifests.get("list_files").cloned() else {
+            return false;
+        };
+        let candidate = CandidateAction::new("list_files")
+            .with_arguments(serde_json::json!({"path": ".", "depth": 2}))
+            .with_confidence(0.6);
+        let call = build_call(
+            ToolCallId::new(),
+            self.state.run_id.clone(),
+            &manifest,
+            candidate.arguments.clone(),
+            (self.config.clock)(),
+        );
+        if !matches!(
+            self.broker.evaluate(&call),
+            nars_tools::PolicyDecision::Allow { .. }
+        ) {
+            return false;
+        }
+        self.state.step += 1;
+        self.state.tool_calls.push(call.clone());
+        self.pending_tool = Some(PendingTool {
+            call: call.clone(),
+            candidate,
+        });
+        self.start_tool(call, output);
+        true
     }
 
     fn start_tool(&mut self, call: ToolCall, output: &mut ActorOutput) {
@@ -1169,6 +1229,32 @@ impl SessionActor {
 }
 
 /// Whether a stored question already covers the new one.
+/// Whether the request can only be answered by inspecting the workspace.
+fn needs_workspace_evidence(task: &TaskSpec) -> bool {
+    let text = format!(
+        "{} {}",
+        task.user_message.to_lowercase(),
+        task.goal.description.to_lowercase()
+    );
+    [
+        "readme",
+        "cargo.toml",
+        "src/",
+        ".rs",
+        "项目",
+        "仓库",
+        "代码",
+        "文件",
+        "目录",
+        "工作区",
+        "workspace",
+        "repository",
+        "project",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
+}
+
 fn knowledge_matches(stored: &str, question: &str) -> bool {
     let stored = normalize_question(stored);
     let question = normalize_question(question);

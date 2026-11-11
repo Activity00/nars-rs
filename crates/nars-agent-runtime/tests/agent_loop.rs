@@ -760,7 +760,7 @@ async fn a_question_is_answered_without_tool_work() {
     write_crate(&dir);
     let mut proposal_ir = proposal("list_files", json!({"path": "."}), 0.9);
     if let AgentIr::TaskProposal(ref mut proposal) = proposal_ir {
-        proposal.goal = GoalSpec::new(GoalType::AnswerQuestion, "what is this project?");
+        proposal.goal = GoalSpec::new(GoalType::AnswerQuestion, "what is NARS?");
         proposal.candidate_actions.clear();
     }
     let (runtime, scripted, _sink) = runtime(
@@ -769,9 +769,9 @@ async fn a_question_is_answered_without_tool_work() {
         ApprovalMode::AutoApprove,
     );
     let task = TaskSpec::new(
-        GoalSpec::new(GoalType::AnswerQuestion, "what is this project?"),
+        GoalSpec::new(GoalType::AnswerQuestion, "what is NARS?"),
         dir.path().display().to_string(),
-        "what is this project?",
+        "what is NARS?",
     );
     let handle = runtime.start(SessionId::new(), task).unwrap();
     let _ = tokio::time::timeout(Duration::from_secs(30), handle.wait()).await;
