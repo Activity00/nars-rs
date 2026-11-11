@@ -180,6 +180,17 @@ impl NarsPlanner {
         experience: Option<&Experience>,
         snapshot: &MemorySnapshot,
     ) -> Result<Self, AgentError> {
+        // The ONA-compatible atom table is fixed at 255 entries. A long-lived
+        // workspace can fill it; starting from that snapshot makes every new
+        // fact fail with "too many atomic terms". Drop the stale memory and
+        // start fresh instead of failing every run.
+        if snapshot.language.atoms.len() + 32 > nars_core::config::ATOMS_MAX {
+            tracing::warn!(
+                atoms = snapshot.language.atoms.len(),
+                "workspace memory exhausted the atom table; starting without it"
+            );
+            return Self::new_with_experience(run_key, tool_names, seed, experience);
+        }
         let mut reasoner =
             Reasoner::from_snapshot(snapshot).map_err(|error| AgentError::Internal {
                 message: error.to_string(),

@@ -168,7 +168,6 @@ pub struct SessionActor {
     plan: TaskPlan,
     stage_guidance_left: u32,
     finish_deferrals_left: u32,
-    evidence_queue: Vec<CandidateAction>,
 }
 
 impl SessionActor {
@@ -249,7 +248,6 @@ impl SessionActor {
             plan,
             stage_guidance_left: 2,
             finish_deferrals_left: 2,
-            evidence_queue: Vec::new(),
         };
         let mut output = ActorOutput::default().with_event(AgentEvent::RunStarted {
             run_id: actor.state.run_id.clone(),
@@ -324,7 +322,6 @@ impl SessionActor {
             plan,
             stage_guidance_left: 2,
             finish_deferrals_left: 2,
-            evidence_queue: Vec::new(),
         };
         let mut output = ActorOutput::default().with_event(AgentEvent::RunResumed {
             run_id: actor.state.run_id.clone(),
@@ -963,37 +960,49 @@ impl SessionActor {
         // A question about the workspace must not be answered from memory
         // alone. Seed the files the user named, reject the first blind answer,
         // then let NARS read them itself if the model won't.
-        if needs_workspace_evidence(&self.state.task) {
-            if self.evidence_queue.is_empty() && self.state.observations.is_empty() {
-                self.evidence_queue = evidence_targets(&self.state.task);
-            }
-            if self.state.observations.is_empty() && self.finish_deferrals_left > 0 {
-                self.finish_deferrals_left -= 1;
-                let plan_view = self.plan.view(self.state.step);
-                let message = "A final_answer is premature: the user asked about this workspace and \
-                               no file has been read yet. Call read_file or list_files to gather \
-                               evidence, then answer with what you found.";
-                let command = self.begin_model_call(
-                    ModelPurpose::Plan,
-                    self.state.step,
-                    prompt::stage_message(&self.state, message, Some(&plan_view)),
-                    &mut output,
-                );
-                output.commands.push(command);
-                return output;
-            }
-            if self.force_evidence_action(&mut output) {
-                return output;
-            }
-        }
-        // The model refused to gather evidence twice: NARS investigates on its
-        // own instead of accepting a blind answer.
-        if self.state.observations.is_empty()
+        let question_goal = matches!(
+            goal_type,
+            nars_agent_ir::GoalType::AnswerQuestion | nars_agent_ir::GoalType::Investigate
+        );
+        if question_goal
             && needs_workspace_evidence(&self.state.task)
-            && self.finish_deferrals_left == 0
-            && self.force_evidence_action(&mut output)
+            && self.state.observations.is_empty()
+            && self.finish_deferrals_left > 0
         {
+            self.finish_deferrals_left -= 1;
+            let plan_view = self.plan.view(self.state.step);
+            let message = "A final_answer is premature: the user asked about this workspace and \
+                           no file has been read yet. Call read_file or list_files to gather \
+                           evidence, then answer with what you found.";
+            let command = self.begin_model_call(
+                ModelPurpose::Plan,
+                self.state.step,
+                prompt::stage_message(&self.state, message, Some(&plan_view)),
+                &mut output,
+            );
+            output.commands.push(command);
             return output;
+        }
+        // The model still won't act: hand the remaining evidence reads to the
+        // normal proposal path, which owns the tool command lifecycle.
+        if question_goal && needs_workspace_evidence(&self.state.task) {
+            let remaining = evidence_targets(&self.state.task)
+                .into_iter()
+                .filter(|candidate| !self.evidence_used(candidate))
+                .collect::<Vec<_>>();
+            if !remaining.is_empty() {
+                let proposal = nars_agent_ir::TaskProposal {
+                    goal: self.state.task.goal.clone(),
+                    constraints: Vec::new(),
+                    candidate_actions: remaining,
+                    confidence: 0.6,
+                    notes: None,
+                    summary: None,
+                };
+                return self
+                    .handle_proposal(proposal, output)
+                    .unwrap_or_else(|error| self.on_internal_error(error));
+            }
         }
         if !stages_done && self.finish_deferrals_left > 0 {
             self.finish_deferrals_left -= 1;
@@ -1062,36 +1071,15 @@ impl SessionActor {
         output
     }
 
-    /// Runs the next read-only evidence action when the model will not.
-    fn force_evidence_action(&mut self, output: &mut ActorOutput) -> bool {
-        let Some(candidate) = self.evidence_queue.first().cloned() else {
-            return false;
-        };
-        let _ = self.evidence_queue.remove(0);
-        let Some(manifest) = self.manifests.get(&candidate.tool).cloned() else {
-            return false;
-        };
-        let call = build_call(
-            ToolCallId::new(),
-            self.state.run_id.clone(),
-            &manifest,
-            candidate.arguments.clone(),
-            (self.config.clock)(),
-        );
-        if !matches!(
-            self.broker.evaluate(&call),
-            nars_tools::PolicyDecision::Allow { .. }
-        ) {
-            return false;
-        }
-        self.state.step += 1;
-        self.state.tool_calls.push(call.clone());
-        self.pending_tool = Some(PendingTool {
-            call: call.clone(),
-            candidate,
-        });
-        self.start_tool(call, output);
-        true
+    fn evidence_used(&self, candidate: &CandidateAction) -> bool {
+        self.state.tool_calls.iter().any(|call| {
+            call.tool == candidate.tool
+                && call
+                    .arguments
+                    .get("path")
+                    .zip(candidate.arguments.get("path"))
+                    .is_some_and(|(left, right)| left == right)
+        })
     }
 
     fn start_tool(&mut self, call: ToolCall, output: &mut ActorOutput) {
