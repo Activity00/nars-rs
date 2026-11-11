@@ -100,7 +100,7 @@ fn render_state(state: &RunState, phase: &str, plan: Option<&TaskPlanView>) -> S
         .observations
         .iter()
         .rev()
-        .take(5)
+        .take(16)
         .collect::<Vec<_>>()
         .into_iter()
         .rev()

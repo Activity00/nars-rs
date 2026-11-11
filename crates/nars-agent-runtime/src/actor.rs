@@ -1308,7 +1308,15 @@ fn evidence_targets(task: &TaskSpec) -> Vec<CandidateAction> {
         }
     }
     if targets.is_empty() {
-        for name in ["README.md", "Cargo.toml"] {
+        let architecture = ["架构", "architecture", "项目", "project", "仓库", "repo"]
+            .iter()
+            .any(|needle| task.user_message.to_lowercase().contains(needle));
+        push_unique(
+            &mut targets,
+            "list_files",
+            serde_json::json!({"path": ".", "depth": 2}),
+        );
+        for name in ["README.md", "Cargo.toml", "UPSTREAM.md"] {
             if workspace.join(name).is_file() {
                 push_unique(&mut targets, "read_file", serde_json::json!({"path": name}));
             }
@@ -1317,23 +1325,64 @@ fn evidence_targets(task: &TaskSpec) -> Vec<CandidateAction> {
         if src.is_dir() {
             collect_text_files(workspace, &src, "src", 0, &mut targets);
         }
-        if targets.is_empty() {
-            push_unique(
-                &mut targets,
-                "list_files",
-                serde_json::json!({"path": ".", "depth": 2}),
-            );
+        if architecture {
+            let crates = workspace.join("crates");
+            if let Ok(entries) = std::fs::read_dir(&crates) {
+                for entry in entries.flatten().take(8) {
+                    if !entry.path().is_dir() {
+                        continue;
+                    }
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let lib = format!("crates/{name}/src/lib.rs");
+                    if workspace.join(&lib).is_file() {
+                        push_unique(&mut targets, "read_file", serde_json::json!({"path": lib}));
+                    }
+                }
+            }
+            let docs = workspace.join("docs");
+            if docs.is_dir() {
+                collect_markdown(workspace, &docs, "docs", 0, &mut targets);
+            }
         }
     }
     targets
         .into_iter()
-        .take(8)
+        .take(16)
         .map(|(tool, args)| {
             CandidateAction::new(tool)
                 .with_arguments(args)
                 .with_confidence(0.6)
         })
         .collect()
+}
+
+fn collect_markdown(
+    workspace: &std::path::Path,
+    dir: &std::path::Path,
+    relative: &str,
+    depth: usize,
+    targets: &mut Vec<(String, serde_json::Value)>,
+) {
+    if depth > 1 || targets.len() >= 16 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten().take(40) {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        let child = format!("{relative}/{name}");
+        if path.is_dir() {
+            collect_markdown(workspace, &path, &child, depth + 1, targets);
+        } else if name.ends_with(".md") {
+            let _ = workspace.join(&child);
+            push_unique(targets, "read_file", serde_json::json!({"path": child}));
+        }
+    }
 }
 
 fn push_unique(
@@ -1353,7 +1402,7 @@ fn collect_text_files(
     depth: usize,
     targets: &mut Vec<(String, serde_json::Value)>,
 ) {
-    if depth > 1 || targets.len() >= 8 {
+    if depth > 1 || targets.len() >= 16 {
         return;
     }
     let Ok(entries) = std::fs::read_dir(dir) else {
