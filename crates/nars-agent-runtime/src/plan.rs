@@ -248,8 +248,16 @@ impl TaskPlan {
         let Some(stage) = self.active_stage() else {
             return true;
         };
-        if stage.status == StageStatus::Blocked || stage.kind == StageKind::Answer {
+        if stage.status == StageStatus::Blocked {
             return false;
+        }
+        if stage.kind == StageKind::Answer {
+            // Gathering more evidence is still legal while answering; the
+            // model may be completing a multi-file read the user asked for.
+            return matches!(
+                tool,
+                "read_file" | "list_files" | "search" | "git_diff" | "git_status"
+            );
         }
         if stage.tools.iter().any(|candidate| candidate == tool) {
             return true;
