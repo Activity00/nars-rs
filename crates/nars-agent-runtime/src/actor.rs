@@ -960,9 +960,15 @@ impl SessionActor {
         // A question about the workspace must not be answered from memory
         // alone. Seed the files the user named, reject the first blind answer,
         // then let NARS read them itself if the model won't.
-        let question_goal = matches!(
+        // Unknown ("other") tasks are treated like questions: the model has
+        // not classified them, so workspace evidence still applies. Code and
+        // test goals keep their own flows.
+        let question_goal = !matches!(
             goal_type,
-            nars_agent_ir::GoalType::AnswerQuestion | nars_agent_ir::GoalType::Investigate
+            nars_agent_ir::GoalType::ModifyCode
+                | nars_agent_ir::GoalType::Refactor
+                | nars_agent_ir::GoalType::CreateFiles
+                | nars_agent_ir::GoalType::RunTests
         );
         if question_goal
             && needs_workspace_evidence(&self.state.task)

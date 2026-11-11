@@ -143,7 +143,7 @@ impl Narsese {
         if self.atom_names.len() >= ATOMS_MAX {
             return Err(NarseseError::new("too many atomic terms"));
         }
-        let atom = u8::try_from(self.atom_names.len() + 1)
+        let atom = u16::try_from(self.atom_names.len() + 1)
             .map_err(|_| NarseseError::new("atom index overflow"))?;
         self.atom_names.push(name.clone());
         self.atom_values.push(None);
@@ -203,7 +203,7 @@ impl Narsese {
             if name.is_empty() {
                 return Err(NarseseError::new("stored atom name is empty"));
             }
-            let atom = u8::try_from(index + 1)
+            let atom = u16::try_from(index + 1)
                 .map_err(|_| NarseseError::new("stored atom index overflow"))?;
             if this.atom_ids.insert(name.clone(), atom).is_some() {
                 return Err(NarseseError::new(format!("duplicate stored atom `{name}`")));

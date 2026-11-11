@@ -31,16 +31,14 @@ fn atom_appears_twice(language: &Narsese, term: &Term) -> bool {
     if relational {
         return false;
     }
-    let mut appeared = [false; 256];
+    let mut appeared = std::collections::HashSet::new();
     for atom in term.atoms().iter().copied() {
         if !language.is_simple_atom(atom) {
             continue;
         }
-        let slot = &mut appeared[usize::from(atom)];
-        if *slot {
+        if !appeared.insert(atom) {
             return true;
         }
-        *slot = true;
     }
     false
 }
@@ -161,13 +159,13 @@ fn invalid_set_operation(language: &Narsese, term: &Term) -> bool {
 }
 
 fn independent_or_dependent_variable_appears_once(language: &Narsese, term: &Term) -> bool {
-    let mut counts = [0_u8; 256];
+    let mut counts = std::collections::HashMap::new();
     for atom in term.atoms().iter().copied() {
-        counts[usize::from(atom)] = counts[usize::from(atom)].saturating_add(1);
+        *counts.entry(atom).or_insert(0_u8) += 1;
     }
     term.atoms().iter().copied().any(|atom| {
         (language.is_independent_variable(atom) || language.is_dependent_variable(atom))
-            && counts[usize::from(atom)] == 1
+            && counts.get(&atom).copied().unwrap_or(0) == 1
     })
 }
 

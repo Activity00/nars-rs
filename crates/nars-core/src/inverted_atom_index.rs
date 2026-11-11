@@ -1,13 +1,11 @@
 //! Inverted atom-to-concept index for semantic candidate lookup.
 
-use std::array;
-
 use crate::config::{ATOMS_MAX, UNIFICATION_DEPTH};
 use crate::{Atom, ConceptId, Narsese, Term};
 
 #[derive(Clone, Debug)]
 pub struct InvertedAtomIndex {
-    chains: [Vec<ConceptId>; ATOMS_MAX + 1],
+    chains: Box<[Vec<ConceptId>]>,
 }
 
 impl Default for InvertedAtomIndex {
@@ -20,7 +18,7 @@ impl InvertedAtomIndex {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            chains: array::from_fn(|_| Vec::new()),
+            chains: (0..=ATOMS_MAX).map(|_| Vec::new()).collect(),
         }
     }
 

@@ -2,7 +2,7 @@
 
 use crate::config::COMPOUND_TERM_SIZE_MAX;
 
-pub type Atom = u8;
+pub type Atom = u16;
 pub const ATOM_FREE: Atom = 0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -60,9 +60,11 @@ impl Term {
     /// ONA's deterministic word-wise hash over the 64-byte atom array.
     #[must_use]
     pub fn ona_hash(&self) -> u64 {
-        self.atoms.chunks_exact(8).fold(0_u64, |mut hash, bytes| {
+        self.atoms.chunks_exact(4).fold(0_u64, |mut hash, chunk| {
             let mut word_bytes = [0_u8; 8];
-            word_bytes.copy_from_slice(bytes);
+            for (slot, atom) in chunk.iter().enumerate() {
+                word_bytes[slot * 2..slot * 2 + 2].copy_from_slice(&atom.to_ne_bytes());
+            }
             let word = u64::from_ne_bytes(word_bytes);
             hash ^= word;
             hash = hash.wrapping_add(!(hash << 15));

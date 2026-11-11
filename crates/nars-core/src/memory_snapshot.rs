@@ -22,7 +22,7 @@ use crate::{
 };
 
 /// Schema version written by this crate.
-pub const MEMORY_SNAPSHOT_VERSION: u32 = 1;
+pub const MEMORY_SNAPSHOT_VERSION: u32 = 2;
 
 /// Snapshot conversion errors.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,7 +94,7 @@ pub struct LanguageRecord {
     #[serde(default)]
     pub values: Vec<Option<ValueRecord>>,
     /// Atom representing the agent itself.
-    pub self_atom: u8,
+    pub self_atom: u16,
 }
 
 /// A measured value attached to an atom.
@@ -398,9 +398,9 @@ pub fn migrate(snapshot: &MemorySnapshot) -> Result<MemorySnapshot, MemorySnapsh
         ));
     }
     let mut language = Narsese::new();
-    let mut mapping: HashMap<u8, u8> = HashMap::new();
+    let mut mapping: HashMap<u16, u16> = HashMap::new();
     for (index, name) in snapshot.language.atoms.iter().enumerate() {
-        let old = u8::try_from(index + 1).map_err(|_| {
+        let old = u16::try_from(index + 1).map_err(|_| {
             MemorySnapshotError::InvalidLanguage("stored atom index overflow".to_owned())
         })?;
         let new = language
@@ -437,13 +437,13 @@ pub fn migrate(snapshot: &MemorySnapshot) -> Result<MemorySnapshot, MemorySnapsh
 
 fn remap_event(
     event: &mut EventRecord,
-    mapping: &HashMap<u8, u8>,
+    mapping: &HashMap<u16, u16>,
 ) -> Result<(), MemorySnapshotError> {
     event.term = remap_term(&event.term, mapping)?;
     Ok(())
 }
 
-fn remap_term(encoded: &str, mapping: &HashMap<u8, u8>) -> Result<String, MemorySnapshotError> {
+fn remap_term(encoded: &str, mapping: &HashMap<u16, u16>) -> Result<String, MemorySnapshotError> {
     let term = decode_term(encoded)?;
     let mut atoms = *term.atoms();
     for atom in &mut atoms {
@@ -462,7 +462,7 @@ fn remap_term(encoded: &str, mapping: &HashMap<u8, u8>) -> Result<String, Memory
 /// Encodes a term as the hex of its non-empty atom prefix.
 #[must_use]
 pub fn encode_term(term: &Term) -> String {
-    let mut encoded = String::with_capacity(COMPOUND_TERM_SIZE_MAX * 2);
+    let mut encoded = String::with_capacity(COMPOUND_TERM_SIZE_MAX * 4);
     for atom in term
         .atoms()
         .iter()
@@ -470,7 +470,7 @@ pub fn encode_term(term: &Term) -> String {
         .take_while(|atom| *atom != crate::term::ATOM_FREE)
     {
         use core::fmt::Write as _;
-        let _ = write!(encoded, "{atom:02x}");
+        let _ = write!(encoded, "{atom:04x}");
     }
     encoded
 }
@@ -481,14 +481,14 @@ pub fn encode_term(term: &Term) -> String {
 ///
 /// Returns an error for odd-length, non-hex, or oversized input.
 pub fn decode_term(encoded: &str) -> Result<Term, MemorySnapshotError> {
-    if encoded.len() > COMPOUND_TERM_SIZE_MAX * 2 || encoded.len() % 2 != 0 {
+    if encoded.len() > COMPOUND_TERM_SIZE_MAX * 4 || encoded.len() % 4 != 0 {
         return Err(MemorySnapshotError::InvalidTerm(encoded.to_owned()));
     }
     let mut term = Term::EMPTY;
-    for (slot, pair) in encoded.as_bytes().chunks(2).enumerate() {
+    for (slot, pair) in encoded.as_bytes().chunks(4).enumerate() {
         let pair = core::str::from_utf8(pair)
             .map_err(|_| MemorySnapshotError::InvalidTerm(encoded.to_owned()))?;
-        let atom = u8::from_str_radix(pair, 16)
+        let atom = u16::from_str_radix(pair, 16)
             .map_err(|_| MemorySnapshotError::InvalidTerm(encoded.to_owned()))?;
         term.atoms_mut()[slot] = atom;
     }
@@ -638,7 +638,7 @@ mod tests {
         );
     }
 
-    fn shift_term(encoded: &str, offset: u8) -> String {
+    fn shift_term(encoded: &str, offset: u16) -> String {
         let term = decode_term(encoded).expect("term");
         let mut atoms = *term.atoms();
         for atom in &mut atoms {

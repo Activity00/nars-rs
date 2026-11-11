@@ -143,6 +143,11 @@ impl Reasoner {
     /// Returns an error when the atom table is incompatible or the memory
     /// snapshot is malformed.
     pub fn from_snapshot(snapshot: &MemorySnapshot) -> Result<Self, ReasonerError> {
+        // Pre-u16 snapshots use the old 2-hex term encoding. Start fresh
+        // instead of failing every run; the next save rewrites the file.
+        if snapshot.version < crate::memory_snapshot::MEMORY_SNAPSHOT_VERSION {
+            return Self::new();
+        }
         // A build that changes the built-in atom table shifts every id, so the
         // stored terms have to be remapped by atom name before they can be
         // trusted.
@@ -3651,7 +3656,7 @@ impl Reasoner {
     #[must_use]
     pub fn inverted_atom_index_snapshot(&self) -> Vec<AtomIndexSnapshot> {
         (1..=self.language.atom_count())
-            .filter_map(|index| u8::try_from(index).ok())
+            .filter_map(|index| u16::try_from(index).ok())
             .filter_map(|atom| {
                 let concepts = self.memory.inverted_index.concepts(atom);
                 (!concepts.is_empty()).then(|| AtomIndexSnapshot {
