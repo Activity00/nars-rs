@@ -122,7 +122,7 @@ impl OpenAiProvider {
             .ok_or_else(|| {
                 ModelError::invalid_output("response is missing choices[0].message.content")
             })?;
-        let ir = parse_agent_ir(content)?;
+        let ir = parse_agent_ir(content).map_err(|error| error.with_raw(content.to_owned()))?;
         let usage = value
             .get("usage")
             .map_or_else(TokenUsage::default, |usage| TokenUsage {

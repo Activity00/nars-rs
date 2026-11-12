@@ -131,6 +131,9 @@ pub struct ModelError {
     /// HTTP status when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<u16>,
+    /// Raw response text when structured parsing failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>,
 }
 
 impl ModelError {
@@ -141,6 +144,7 @@ impl ModelError {
             message: message.into(),
             retryable: false,
             status: None,
+            raw: None,
         }
     }
 
@@ -151,6 +155,7 @@ impl ModelError {
             message: message.into(),
             retryable: true,
             status: None,
+            raw: None,
         }
     }
 
@@ -163,6 +168,7 @@ impl ModelError {
             message: format!("provider returned HTTP {status}: {truncated}"),
             retryable: status == 429 || status >= 500,
             status: Some(status),
+            raw: None,
         }
     }
 
@@ -173,7 +179,17 @@ impl ModelError {
             message: format!("invalid structured output: {}", message.into()),
             retryable: true,
             status: None,
+            raw: None,
         }
+    }
+}
+
+impl ModelError {
+    /// Attaches the raw provider text so the runtime can salvage a prose answer.
+    #[must_use]
+    pub fn with_raw(mut self, raw: impl Into<String>) -> Self {
+        self.raw = Some(raw.into());
+        self
     }
 }
 

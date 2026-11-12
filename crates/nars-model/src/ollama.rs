@@ -81,7 +81,7 @@ impl OllamaProvider {
             .and_then(|message| message.get("content"))
             .and_then(Value::as_str)
             .ok_or_else(|| ModelError::invalid_output("response is missing message.content"))?;
-        let ir = parse_agent_ir(content)?;
+        let ir = parse_agent_ir(content).map_err(|error| error.with_raw(content.to_owned()))?;
         let prompt = value
             .get("prompt_eval_count")
             .and_then(Value::as_u64)

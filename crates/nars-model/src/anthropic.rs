@@ -120,7 +120,7 @@ impl AnthropicProvider {
             })
             .filter(|text| !text.is_empty())
             .ok_or_else(|| ModelError::invalid_output("response has no text content block"))?;
-        let ir = parse_agent_ir(&content)?;
+        let ir = parse_agent_ir(&content).map_err(|error| error.with_raw(content.clone()))?;
         let usage = value
             .get("usage")
             .map_or_else(TokenUsage::default, |usage| {

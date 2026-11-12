@@ -467,10 +467,44 @@ impl SessionActor {
             step: self.state.step,
             error: error.message.clone(),
         });
+        // The provider answered with something that is not Agent IR. If it is
+        // prose, keep it as the answer instead of failing the whole run.
+        if let Some(raw) = error
+            .raw
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        {
+            return self.finish_with_text(raw.to_owned(), output);
+        }
         self.fail(
             AgentError::model(error.message.clone(), error.retryable),
             output,
         )
+    }
+
+    fn finish_with_text(&mut self, text: String, mut output: ActorOutput) -> ActorOutput {
+        self.state.messages.push(ChatMessage {
+            role: ChatRole::Assistant,
+            text: text.clone(),
+            run_id: Some(self.state.run_id.clone()),
+            created_at_ms: (self.config.clock)(),
+        });
+        output.events.push(AgentEvent::AssistantMessage {
+            run_id: self.state.run_id.clone(),
+            text: text.clone(),
+        });
+        self.phase = Phase::Finished;
+        self.state.status = RunStatus::Completed;
+        self.state.touch((self.config.clock)());
+        output.events.push(AgentEvent::RunCompleted {
+            run_id: self.state.run_id.clone(),
+            summary: text,
+            success: true,
+        });
+        output.commands.push(Command::Checkpoint);
+        output.commands.push(Command::Finish);
+        output
     }
 
     /// Handles a completed tool call.
