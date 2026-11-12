@@ -169,6 +169,7 @@ pub struct SessionActor {
     stage_guidance_left: u32,
     finish_deferrals_left: u32,
     finalize_forces_left: u32,
+    forcing_evidence: bool,
 }
 
 impl SessionActor {
@@ -250,6 +251,7 @@ impl SessionActor {
             stage_guidance_left: 2,
             finish_deferrals_left: 2,
             finalize_forces_left: 2,
+            forcing_evidence: false,
         };
         let mut output = ActorOutput::default().with_event(AgentEvent::RunStarted {
             run_id: actor.state.run_id.clone(),
@@ -325,6 +327,7 @@ impl SessionActor {
             stage_guidance_left: 2,
             finish_deferrals_left: 2,
             finalize_forces_left: 2,
+            forcing_evidence: false,
         };
         let mut output = ActorOutput::default().with_event(AgentEvent::RunResumed {
             run_id: actor.state.run_id.clone(),
@@ -491,12 +494,13 @@ impl SessionActor {
                         notes: None,
                         summary: None,
                     };
-                    return self
-                        .handle_proposal(proposal, output)
-                        .unwrap_or_else(|error| self.on_internal_error(error));
+                    self.forcing_evidence = true;
+                    let result = self.handle_proposal(proposal, output);
+                    self.forcing_evidence = false;
+                    return result.unwrap_or_else(|error| self.on_internal_error(error));
                 }
             }
-            return self.finish_with_text(raw.to_owned(), output);
+            return self.finish_with_text(extract_prose(raw), output);
         }
         self.fail(
             AgentError::model(error.message.clone(), error.retryable),
@@ -784,7 +788,8 @@ impl SessionActor {
             && self.manifests.contains_key("ask_model");
         // Questions may still need workspace evidence; only force the answer
         // for action goals whose stages NARS considers complete.
-        if !is_question && nars_stage == "answer" && self.plan.is_active() {
+        if !is_question && !self.forcing_evidence && nars_stage == "answer" && self.plan.is_active()
+        {
             // The model may keep proposing actions instead of answering. Cap
             // the number of forced finalize calls so a stubborn model cannot
             // loop forever without advancing the step counter.
@@ -1094,9 +1099,10 @@ impl SessionActor {
                     notes: None,
                     summary: None,
                 };
-                return self
-                    .handle_proposal(proposal, output)
-                    .unwrap_or_else(|error| self.on_internal_error(error));
+                self.forcing_evidence = true;
+                let result = self.handle_proposal(proposal, output);
+                self.forcing_evidence = false;
+                return result.unwrap_or_else(|error| self.on_internal_error(error));
             }
         }
         if !stages_done && self.finish_deferrals_left > 0 {
@@ -1507,6 +1513,21 @@ fn needs_workspace_evidence(task: &TaskSpec) -> bool {
     ]
     .iter()
     .any(|needle| text.contains(needle))
+}
+
+/// Recovers readable text from a truncated JSON answer or plain prose.
+fn extract_prose(raw: &str) -> String {
+    let Some(start) = raw.find("\"text\":\"") else {
+        return raw.trim().to_owned();
+    };
+    let rest = &raw[start + 8..];
+    let end = rest.rfind('"').unwrap_or(rest.len());
+    rest[..end]
+        .replace("\\n", "\n")
+        .replace("\\\"", "\"")
+        .replace("\\\\", "\\")
+        .trim()
+        .to_owned()
 }
 
 fn knowledge_matches(stored: &str, question: &str) -> bool {
