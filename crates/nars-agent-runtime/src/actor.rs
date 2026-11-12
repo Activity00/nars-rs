@@ -475,6 +475,27 @@ impl SessionActor {
             .map(str::trim)
             .filter(|text| !text.is_empty())
         {
+            // Prefer evidence over a premature prose answer: keep reading the
+            // workspace targets the user's request implies, then finish.
+            if needs_workspace_evidence(&self.state.task) {
+                let remaining = evidence_targets(&self.state.task)
+                    .into_iter()
+                    .filter(|candidate| !self.evidence_used(candidate))
+                    .collect::<Vec<_>>();
+                if !remaining.is_empty() {
+                    let proposal = nars_agent_ir::TaskProposal {
+                        goal: self.state.task.goal.clone(),
+                        constraints: Vec::new(),
+                        candidate_actions: remaining,
+                        confidence: 0.6,
+                        notes: None,
+                        summary: None,
+                    };
+                    return self
+                        .handle_proposal(proposal, output)
+                        .unwrap_or_else(|error| self.on_internal_error(error));
+                }
+            }
             return self.finish_with_text(raw.to_owned(), output);
         }
         self.fail(
