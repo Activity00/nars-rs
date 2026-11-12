@@ -256,7 +256,7 @@ impl TaskPlan {
             // model may be completing a multi-file read the user asked for.
             return matches!(
                 tool,
-                "read_file" | "list_files" | "search" | "git_diff" | "git_status"
+                "read_file" | "list_files" | "search" | "git_diff" | "git_status" | "ask_model"
             );
         }
         if stage.tools.iter().any(|candidate| candidate == tool) {

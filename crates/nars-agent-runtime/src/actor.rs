@@ -1054,6 +1054,63 @@ impl SessionActor {
             .goal_type()
             .unwrap_or(self.state.task.goal.goal_type);
         let stages_done = self.planner.stages_satisfied(goal_type);
+        // A pure question with no evidence yet: consult the model as a tool,
+        // so the answer comes from knowledge the agent acquired, not only from
+        // the model's immediate reply.
+        let known_answer = self
+            .config
+            .prior_knowledge
+            .iter()
+            .any(|(asked, _)| knowledge_matches(asked, &self.state.task.user_message));
+        let asked_model = self
+            .state
+            .observations
+            .iter()
+            .any(|observation| observation.tool == "ask_model");
+        let knowledge_question = matches!(
+            goal_type,
+            nars_agent_ir::GoalType::AnswerQuestion | nars_agent_ir::GoalType::Other
+        ) && !needs_workspace_evidence(&self.state.task)
+            && !needs_strong_evidence(&self.state.task)
+            && {
+                let text = self.state.task.user_message.trim();
+                let lower = text.to_lowercase();
+                let greeting = ["你好", "您好", "hi", "hello", "hey", "谢谢", "在吗"]
+                    .iter()
+                    .any(|word| lower == *word || lower.starts_with(word));
+                (text.contains('?') || text.contains('？'))
+                    && !greeting
+                    && text.chars().count() >= 4
+            };
+        if knowledge_question
+            && !known_answer
+            && !asked_model
+            && self.state.observations.is_empty()
+            && self.manifests.contains_key("ask_model")
+        {
+            let question = if self.state.task.user_message.trim().is_empty() {
+                self.state.task.goal.description.clone()
+            } else {
+                self.state.task.user_message.clone()
+            };
+            let proposal = nars_agent_ir::TaskProposal {
+                goal: self.state.task.goal.clone(),
+                constraints: Vec::new(),
+                candidate_actions: vec![
+                    CandidateAction::new("ask_model")
+                        .with_arguments(serde_json::json!({ "question": question }))
+                        .with_confidence(0.8),
+                ],
+                confidence: 0.8,
+                notes: None,
+                summary: None,
+            };
+            self.forcing_evidence = true;
+            let result = self.handle_proposal(proposal, output);
+            self.forcing_evidence = false;
+            return result.unwrap_or_else(|error| self.on_internal_error(error));
+        }
+
         // A question about the workspace must not be answered from memory
         // alone. Seed the files the user named, reject the first blind answer,
         // then let NARS read them itself if the model won't.
