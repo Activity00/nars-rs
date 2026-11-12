@@ -1067,11 +1067,9 @@ impl SessionActor {
                 | nars_agent_ir::GoalType::CreateFiles
                 | nars_agent_ir::GoalType::RunTests
         );
-        if question_goal
-            && needs_workspace_evidence(&self.state.task)
-            && self.state.observations.is_empty()
-            && self.finish_deferrals_left > 0
-        {
+        let wants_evidence = (question_goal && needs_workspace_evidence(&self.state.task))
+            || (!question_goal && needs_strong_evidence(&self.state.task));
+        if wants_evidence && self.state.observations.is_empty() && self.finish_deferrals_left > 0 {
             self.finish_deferrals_left -= 1;
             let plan_view = self.plan.view(self.state.step);
             let message = "A final_answer is premature: the user asked about this workspace and \
@@ -1088,7 +1086,7 @@ impl SessionActor {
         }
         // The model still won't act: hand the remaining evidence reads to the
         // normal proposal path, which owns the tool command lifecycle.
-        if question_goal && needs_workspace_evidence(&self.state.task) {
+        if wants_evidence {
             let remaining = evidence_targets(&self.state.task)
                 .into_iter()
                 .filter(|candidate| !self.evidence_used(candidate))
@@ -1490,6 +1488,29 @@ fn collect_text_files(
             push_unique(targets, "read_file", serde_json::json!({"path": child}));
         }
     }
+}
+
+/// Stronger signal used for non-question goal types: these phrases mean the
+/// user clearly wants repository evidence, whatever the model classified.
+fn needs_strong_evidence(task: &TaskSpec) -> bool {
+    let text = format!(
+        "{} {}",
+        task.user_message.to_lowercase(),
+        task.goal.description.to_lowercase()
+    );
+    [
+        "架构",
+        "architecture",
+        "项目",
+        "project",
+        "仓库",
+        "repository",
+        "readme",
+        "cargo.toml",
+        "docs",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
 }
 
 /// Whether the request can only be answered by inspecting the workspace.
