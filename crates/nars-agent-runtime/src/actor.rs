@@ -464,12 +464,9 @@ impl SessionActor {
         request_id: &RequestId,
         error: &nars_model::ModelError,
     ) -> ActorOutput {
-        let output = ActorOutput::default().with_event(AgentEvent::ModelFailed {
-            run_id: self.state.run_id.clone(),
-            request_id: request_id.clone(),
-            step: self.state.step,
-            error: error.message.clone(),
-        });
+        // Do not report a model failure yet: a prose response may still be
+        // salvaged into an answer below.
+        let output = ActorOutput::default();
         // The provider answered with something that is not Agent IR. If it is
         // prose, keep it as the answer instead of failing the whole run.
         if let Some(raw) = error
@@ -502,6 +499,12 @@ impl SessionActor {
             }
             return self.finish_with_text(extract_prose(raw), output);
         }
+        let output = output.with_event(AgentEvent::ModelFailed {
+            run_id: self.state.run_id.clone(),
+            request_id: request_id.clone(),
+            step: self.state.step,
+            error: error.message.clone(),
+        });
         self.fail(
             AgentError::model(error.message.clone(), error.retryable),
             output,
