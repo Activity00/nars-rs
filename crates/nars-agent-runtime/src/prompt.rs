@@ -110,7 +110,7 @@ fn render_state(state: &RunState, phase: &str, plan: Option<&TaskPlanView>) -> S
                 .iter()
                 .rev()
                 .find(|result| result.call_id == observation.call_id)
-                .map(|result| excerpt(&result.stdout, 2_500))
+                .map(|result| excerpt(&result.stdout, 1_200))
                 .unwrap_or_default();
             json!({
                 "tool": observation.tool,
@@ -152,8 +152,9 @@ fn render_state(state: &RunState, phase: &str, plan: Option<&TaskPlanView>) -> S
              is missing and what you can answer."
         }
         "finalize" => {
-            "The task is ending. Return a final_answer summarizing what was done, what \
-                       was verified, and anything the user must know. Do not propose new actions."
+            "The task is ending. Return exactly one JSON object of kind `final_answer` that \
+             answers the user using the observations above. Do not propose actions, do not \
+             wrap the JSON in prose or Markdown fences."
         }
         "repair" => "Return a corrected Agent IR object.",
         other if !matches!(other, "plan" | "finalize") => other,

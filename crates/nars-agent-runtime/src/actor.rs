@@ -63,7 +63,7 @@ impl Default for ActorConfig {
         Self {
             model: "gpt-4.1-mini".to_owned(),
             temperature: 0.2,
-            max_tokens: 4_096,
+            max_tokens: 8_192,
             model_timeout_ms: 120_000,
             seed: 1,
             repair_attempts: 2,
